@@ -616,11 +616,6 @@
   .video-retry-btn {
     font-size: 0.85rem;
   }
-    height: auto;
-    border-radius: calc(var(--radius-sm) - 2px);
-    margin-top: 0;
-    max-width: 100%;
-  }
 
   .video-fallback {
     display: none;
