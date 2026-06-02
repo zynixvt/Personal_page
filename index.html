@@ -50,9 +50,17 @@
     </div>
     <div class="panel-content">
       <div class="card video-form-card">
-        <div class="video-form">
-          <input type="url" id="video-url-input" placeholder="Pega el enlace de YouTube..." aria-label="URL del video de YouTube">
-          <button id="video-add-btn" class="btn">Agregar</button>
+        <div class="video-form-split">
+          <div class="video-form-url">
+            <input type="url" id="video-url-input" placeholder="URL de YouTube..." aria-label="URL del video de YouTube">
+            <button id="video-add-btn" class="btn">Agregar</button>
+          </div>
+          <div class="video-form-divider" aria-hidden="true"></div>
+          <div class="video-form-upload">
+            <input type="file" id="video-file-input" accept="video/mp4,video/webm,video/quicktime" hidden>
+            <button id="video-upload-btn" class="btn btn-outline" disabled title="Próximamente: configura Cloudinary">📁 Subir video</button>
+            <span id="video-upload-status" class="video-upload-status"></span>
+          </div>
         </div>
         <p id="video-error" class="video-error" role="alert" hidden></p>
       </div>

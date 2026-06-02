@@ -167,12 +167,111 @@
   };
 
   // ======================================================================
-  // YouTubeManager — URL parsing, localStorage CRUD, render
+  // Configuration — Cloudinary + Supabase (completar cuando tengas cuentas)
   // ======================================================================
-  var STORAGE_KEY = 'youtube-videos';
+  var VIDEO_STORAGE_KEY = 'youtube-videos';
   var MAX_VIDEOS = 100;
   var WARN_AT_VIDEOS = 50;
   var EXISTING_IDS = ['sYuKxwo-7Sw', 'kqejYrjVuNk', 'gg2kxw2qOPs'];
+
+  // Cloudinary (crear upload preset unsigned antes de activar)
+  // 1. Ir a cloudinary.com/console/settings/upload
+  // 2. Sección "Upload presets" → "Add upload preset"
+  // 3. Modo: Unsigned, Nombre: mis_videos
+  // 4. Copiar el nombre del preset abajo
+  var CLOUDINARY_CLOUD_NAME = 'ddxn2k6nt';
+  var CLOUDINARY_UPLOAD_PRESET = 'VID_DataBase';
+  var MAX_FILE_SIZE_MB = 50;
+
+  // Supabase
+  var SUPABASE_URL = 'https://pcnyekkuhovfycfxjfpx.supabase.co';
+  var SUPABASE_ANON_KEY = 'sb_publishable_brqVUs-64msjtqctFX02kQ_iU_OQdbt';
+
+  // ======================================================================
+  // SupabaseSync — shared video storage via Supabase REST API
+  // ======================================================================
+
+  var SupabaseSync = {
+    _enabled: false,
+    _baseUrl: '',
+    _headers: {},
+
+    init: function () {
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+      this._enabled = true;
+      this._baseUrl = SUPABASE_URL + '/rest/v1/videos';
+      this._headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      };
+    },
+
+    fetchAll: function () {
+      if (!this._enabled) return Promise.reject('SupabaseSync not configured');
+      return fetch(this._baseUrl + '?select=video_id,source,url,title&order=created_at.asc', {
+        headers: this._headers
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Supabase fetch error: ' + res.status);
+        return res.json();
+      }).then(function (rows) {
+        return rows.map(function (r) {
+          var entry = {
+            id: r.video_id,
+            source: r.source || 'youtube',
+            addedAt: new Date().toISOString()
+          };
+          if (r.title) entry.title = r.title;
+          if (r.url) entry.url = r.url;
+          return entry;
+        });
+      });
+    },
+
+    add: function (video) {
+      if (!this._enabled) return Promise.reject();
+      return fetch(this._baseUrl, {
+        method: 'POST',
+        headers: this._headers,
+        body: JSON.stringify({
+          video_id: video.id,
+          source: video.source || 'youtube',
+          url: video.url || '',
+          title: video.title || ''
+        })
+      }).then(function (res) {
+        if (!res.ok && res.status !== 409) throw new Error('Supabase insert error: ' + res.status);
+        // 409 = already exists (unique constraint), that's fine
+      });
+    },
+
+    remove: function (videoId) {
+      if (!this._enabled) return Promise.reject();
+      return fetch(this._baseUrl + '?video_id=eq.' + encodeURIComponent(videoId), {
+        method: 'DELETE',
+        headers: this._headers
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Supabase delete error: ' + res.status);
+      });
+    },
+
+    get enabled() { return this._enabled; }
+  };
+
+  // Merge Supabase + localStorage videos by id, dedup, Supabase wins on conflict
+  function mergeVideoLists(supabaseVideos, localVideos) {
+    var map = {};
+    localVideos.forEach(function (v) { map[v.id] = v; });
+    supabaseVideos.forEach(function (v) { map[v.id] = v; }); // Supabase overwrites
+    return Object.values(map).sort(function (a, b) {
+      return new Date(b.addedAt) - new Date(a.addedAt);
+    });
+  }
+
+  // ======================================================================
+  // VideoManager — YouTube + Cloudinary, localStorage CRUD, Supabase sync
+  // ======================================================================
 
   var YouTubeManager = {
     extractId: function (url) {
@@ -210,12 +309,41 @@
       // Cap at MAX_VIDEOS
       if (videos.length >= MAX_VIDEOS) return 'full';
 
-      videos.push({
+      var video = {
         id: id,
+        source: 'youtube',
         title: title || '',
         addedAt: new Date().toISOString()
-      });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(videos));
+      };
+      videos.push(video);
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
+
+      // Sync to Supabase (fire-and-forget)
+      SupabaseSync.add(video).catch(function () {});
+      return 'added';
+    },
+
+    addCloudinary: function (url, publicId, title) {
+      var videos = YouTubeManager.getAll();
+      // Check duplicates by publicId
+      var exists = videos.some(function (v) { return v.id === publicId; });
+      if (exists) return 'duplicate';
+
+      // Cap at MAX_VIDEOS
+      if (videos.length >= MAX_VIDEOS) return 'full';
+
+      var video = {
+        id: publicId,
+        source: 'cloudinary',
+        url: url,
+        title: title || 'Video subido',
+        addedAt: new Date().toISOString()
+      };
+      videos.push(video);
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
+
+      // Sync to Supabase (fire-and-forget)
+      SupabaseSync.add(video).catch(function () {});
       return 'added';
     },
 
@@ -229,12 +357,17 @@
 
     remove: function (id) {
       var videos = YouTubeManager.getAll().filter(function (v) { return v.id !== id; });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(videos));
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
+      SupabaseSync.remove(id).catch(function () {});
     },
 
     getAll: function () {
       try {
-        var data = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+        var data = JSON.parse(localStorage.getItem(VIDEO_STORAGE_KEY) || '[]');
+        // Backward compat: entradas viejas sin source son YouTube
+        data.forEach(function (v) {
+          if (!v.source) v.source = 'youtube';
+        });
         // Sort newest first
         data.sort(function (a, b) {
           return new Date(b.addedAt) - new Date(a.addedAt);
@@ -252,11 +385,12 @@
       var entries = EXISTING_IDS.map(function (id) {
         return {
           id: id,
+          source: 'youtube',
           title: '',
           addedAt: new Date().toISOString()
         };
       });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(entries));
     },
 
     render: function (container) {
@@ -280,40 +414,109 @@
         var card = document.createElement('div');
         card.className = 'card video-card';
 
+        // Badge de origen
+        var badge = document.createElement('span');
+        badge.className = 'video-badge';
+        if (entry.source === 'cloudinary') {
+          badge.textContent = 'Subido';
+        } else {
+          badge.textContent = 'YouTube';
+        }
+        card.appendChild(badge);
+
         var wrapper = document.createElement('div');
         wrapper.className = 'video-card-wrapper';
 
-        var iframe = document.createElement('iframe');
-        iframe.src = 'https://www.youtube.com/embed/' + entry.id;
-        iframe.title = 'YouTube video';
-        iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
-        iframe.setAttribute('allowfullscreen', '');
-        iframe.setAttribute('loading', 'lazy');
-        wrapper.appendChild(iframe);
+        if (entry.source === 'cloudinary') {
+          // Cloudinary: render como <video>
+          var videoEl = document.createElement('video');
+          videoEl.src = entry.url;
+          videoEl.controls = true;
+          videoEl.playsInline = true;
+          videoEl.preload = 'metadata';
+          videoEl.title = entry.title || 'Video subido';
+          wrapper.appendChild(videoEl);
+        } else {
+          // YouTube: render como <iframe>
+          var iframe = document.createElement('iframe');
+          iframe.src = 'https://www.youtube.com/embed/' + entry.id;
+          iframe.title = 'YouTube video';
+          iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
+          iframe.setAttribute('allowfullscreen', '');
+          iframe.setAttribute('loading', 'lazy');
+          wrapper.appendChild(iframe);
 
-        var fallback = document.createElement('a');
-        fallback.className = 'video-fallback';
-        fallback.href = 'https://www.youtube.com/watch?v=' + entry.id;
-        fallback.target = '_blank';
-        fallback.rel = 'noopener';
-        fallback.textContent = 'Ver en YouTube';
-        // Hide fallback by default — only shown if embed fails
-        fallback.style.display = 'none';
-        wrapper.appendChild(fallback);
+          // Overlay de retry (se muestra si no carga después del timeout)
+          var retryOverlay = document.createElement('div');
+          retryOverlay.className = 'video-retry';
+          retryOverlay.innerHTML = '<span class="video-retry-msg">No se pudo cargar</span><button class="btn video-retry-btn">↻ Reintentar</button>';
+          wrapper.appendChild(retryOverlay);
 
-        // Reliable fallback: timeout-based, since iframe 'error' event
-        // is not standardized across browsers for embed blocking.
-        var embedLoaded = false;
-        var FALLBACK_TIMEOUT_MS = 8000;
-        iframe.addEventListener('load', function () {
-          embedLoaded = true;
-        });
-        setTimeout(function () {
-          if (!embedLoaded) {
-            iframe.style.display = 'none';
-            fallback.style.display = 'flex';
+          var fallback = document.createElement('a');
+          fallback.className = 'video-fallback';
+          fallback.href = 'https://www.youtube.com/watch?v=' + entry.id;
+          fallback.target = '_blank';
+          fallback.rel = 'noopener';
+          fallback.textContent = 'Ver en YouTube';
+          fallback.style.display = 'none';
+          wrapper.appendChild(fallback);
+
+          var embedLoaded = false;
+          var retryTimers = [];
+
+          function clearRetryTimers() {
+            retryTimers.forEach(function (t) { clearTimeout(t); });
+            retryTimers = [];
           }
-        }, FALLBACK_TIMEOUT_MS);
+
+          function onLoad() {
+            embedLoaded = true;
+            clearRetryTimers();
+            retryOverlay.style.display = 'none';
+            fallback.style.display = 'none';
+            iframe.style.opacity = '1';
+          }
+
+          function showFailed() {
+            if (embedLoaded) return;
+            retryOverlay.style.display = 'flex';
+            fallback.style.display = 'flex';
+            iframe.style.opacity = '0.3';
+          }
+
+          function reloadVideo() {
+            retryOverlay.style.display = 'none';
+            fallback.style.display = 'none';
+            iframe.style.opacity = '1';
+            // Cache-busting para forzar recarga desde cero
+            iframe.src = 'https://www.youtube.com/embed/' + entry.id + '?_=' + Date.now();
+          }
+
+          function reloadAndCheck() {
+            if (embedLoaded) return;
+            reloadVideo();
+            retryTimers.push(setTimeout(showFailed, 8000));
+          }
+
+          iframe.addEventListener('load', onLoad);
+
+          // Primer check: si no cargó, mostrar fallback + overlay
+          retryTimers.push(setTimeout(showFailed, 8000));
+
+          // Auto-retry schedule (desde el inicio, no desde el fallo)
+          retryTimers.push(setTimeout(reloadAndCheck, 25000)); // 25s total
+          retryTimers.push(setTimeout(reloadAndCheck, 45000)); // 45s total
+
+          // Botón manual de retry
+          retryOverlay.querySelector('.video-retry-btn').addEventListener('click', function () {
+            clearRetryTimers();
+            reloadVideo();
+            // Reprogramar desde cero
+            retryTimers.push(setTimeout(showFailed, 8000));
+            retryTimers.push(setTimeout(reloadAndCheck, 25000));
+            retryTimers.push(setTimeout(reloadAndCheck, 45000));
+          });
+        }
 
         card.appendChild(wrapper);
 
@@ -338,6 +541,8 @@
     running: false,
     paused: false,
     rafId: null,
+    _slowDevice: false,
+    _frameSkip: 0,
 
     init: function () {
       if (prefersReduced) return;
@@ -345,6 +550,11 @@
       var canvas = document.getElementById('particles');
       if (!canvas) return;
       var ctx = canvas.getContext('2d');
+
+      // Detectar dispositivo lento (mobile, pocos cores, o batería baja)
+      var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+      var cores = navigator.hardwareConcurrency || 4;
+      ParticleSystem._slowDevice = isMobile || cores <= 4;
 
       var W, H;
       function resize() {
@@ -392,7 +602,9 @@
         return { x: -30, y: Math.random() * H };
       }
 
-      var PARTICLE_COUNT = 45;
+      var PARTICLE_COUNT = ParticleSystem._slowDevice ? 20 : 45;
+      var CONNECT_DIST = ParticleSystem._slowDevice ? 60 : 100;
+      var CELL_SIZE = CONNECT_DIST;
       var COLORS = [{ h: 25 }, { h: 280 }, { h: 190 }];
 
       ParticleSystem.particles = Array.from({ length: PARTICLE_COUNT }, function (_, i) {
@@ -423,6 +635,15 @@
       ParticleSystem._draw = function () {
         if (!pageVisible) return;
         if (ParticleSystem.paused) return;
+
+        // Frame budget: si el dispositivo es lento, saltear frames pares
+        if (ParticleSystem._slowDevice) {
+          ParticleSystem._frameSkip++;
+          if (ParticleSystem._frameSkip % 2 === 0) {
+            ParticleSystem.rafId = requestAnimationFrame(ParticleSystem._draw);
+            return;
+          }
+        }
 
         ctx.clearRect(0, 0, W, H);
 
@@ -463,8 +684,7 @@
           ctx.fill();
         }
 
-        // Spatial grid for connection optimization (~100px cells)
-        var CELL_SIZE = 100;
+        // Spatial grid for connection optimization
         var grid = new Map();
 
         for (var i2 = 0; i2 < ParticleSystem.particles.length; i2++) {
@@ -496,8 +716,8 @@
                 var dy2 = p3.y - ParticleSystem.particles[j].y;
                 var dist2 = dx2 * dx2 + dy2 * dy2;
 
-                if (dist2 < 10000) {
-                  var alpha = 0.15 * (1 - Math.sqrt(dist2) / 100);
+                if (dist2 < CONNECT_DIST * CONNECT_DIST) {
+                  var alpha = 0.15 * (1 - Math.sqrt(dist2) / CONNECT_DIST);
                   ctx.beginPath();
                   ctx.moveTo(p3.x, p3.y);
                   ctx.lineTo(ParticleSystem.particles[j].x, ParticleSystem.particles[j].y);
@@ -663,13 +883,36 @@
   // Initialization
   // ======================================================================
   function init() {
+    // Init Supabase sync
+    SupabaseSync.init();
+
     // YouTube: migrate existing videos on first load
     YouTubeManager.migrateExisting();
 
-    // Render video list
+    // Render video list (from localStorage — instant)
     var videoList = document.getElementById('video-list');
     if (videoList) {
       YouTubeManager.render(videoList);
+    }
+
+    // Load from Supabase in background and merge
+    if (SupabaseSync.enabled && videoList) {
+      SupabaseSync.fetchAll().then(function (remoteVideos) {
+        var localVideos = YouTubeManager.getAll();
+        if (remoteVideos.length === 0 && localVideos.length > 0) {
+          // Supabase vacío, migrar videos locales a Supabase
+          localVideos.forEach(function (v) {
+            SupabaseSync.add(v).catch(function () {});
+          });
+        } else if (remoteVideos.length > 0) {
+          // Mezclar: remote gana en conflictos, locales que no estén remotos se agregan
+          var merged = mergeVideoLists(remoteVideos, localVideos);
+          localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(merged));
+          YouTubeManager.render(videoList);
+        }
+      }).catch(function () {
+        // Supabase no disponible, todo ok con localStorage
+      });
     }
 
     // YouTube add button
@@ -704,6 +947,83 @@
       addBtn.addEventListener('click', handleAdd);
       urlInput.addEventListener('keydown', function (e) {
         if (e.key === 'Enter') handleAdd();
+      });
+    }
+
+    // ===== Cloudinary file upload (requiere upload preset unsigned) =====
+    var fileInput = document.getElementById('video-file-input');
+    var uploadBtn = document.getElementById('video-upload-btn');
+    var uploadStatus = document.getElementById('video-upload-status');
+
+    function subirACloudinary(file) {
+      if (!CLOUDINARY_UPLOAD_PRESET) {
+        if (uploadStatus) {
+          uploadStatus.textContent = '⚠️ Configurá un upload preset en Cloudinary primero.';
+        }
+        return;
+      }
+
+      if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+        if (uploadStatus) {
+          uploadStatus.textContent = '❌ El archivo supera los ' + MAX_FILE_SIZE_MB + 'MB.';
+        }
+        return;
+      }
+
+      if (uploadStatus) uploadStatus.textContent = 'Subiendo...';
+
+      var formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', CLOUDINARY_UPLOAD_PRESET);
+
+      fetch('https://api.cloudinary.com/v1_1/' + CLOUDINARY_CLOUD_NAME + '/auto/upload', {
+        method: 'POST',
+        body: formData
+      })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (data.secure_url) {
+          var result = YouTubeManager.addCloudinary(data.secure_url, data.public_id, file.name);
+          if (result === 'added') {
+            if (uploadStatus) uploadStatus.textContent = '✅ Video subido correctamente.';
+            if (videoList) YouTubeManager.render(videoList);
+          } else if (result === 'duplicate') {
+            if (uploadStatus) uploadStatus.textContent = '⚠️ Ese video ya está en tu lista.';
+          } else if (result === 'full') {
+            if (uploadStatus) uploadStatus.textContent = '❌ Límite de ' + MAX_VIDEOS + ' videos alcanzado.';
+          }
+        } else {
+          if (uploadStatus) uploadStatus.textContent = '❌ Error al subir: ' + (data.error && data.error.message ? data.error.message : 'desconocido');
+        }
+      })
+      .catch(function () {
+        if (uploadStatus) uploadStatus.textContent = '❌ Error de conexión al subir el video.';
+      });
+    }
+
+    if (fileInput && uploadBtn) {
+      // Habilitar botón si Cloudinary está configurado
+      if (CLOUDINARY_UPLOAD_PRESET) {
+        uploadBtn.disabled = false;
+        uploadBtn.title = 'Subir video a Cloudinary';
+      }
+
+      uploadBtn.addEventListener('click', function () {
+        // Si no está configurado, mostrar mensaje de ayuda
+        if (!CLOUDINARY_UPLOAD_PRESET) {
+          if (uploadStatus) {
+            uploadStatus.textContent = '⚠️ Creá un upload preset unsigned en cloudinary.com/settings/upload y poné el nombre en CLOUDINARY_UPLOAD_PRESET.';
+          }
+          return;
+        }
+        fileInput.click();
+      });
+
+      fileInput.addEventListener('change', function () {
+        if (fileInput.files && fileInput.files[0]) {
+          subirACloudinary(fileInput.files[0]);
+          fileInput.value = ''; // Reset para poder subir el mismo archivo de nuevo
+        }
       });
     }
 
