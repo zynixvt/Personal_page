@@ -558,27 +558,31 @@
   }
 
   .video-badge {
-    position: absolute;
-    top: 12px;
-    right: 12px;
+    align-self: flex-end;
     font-size: 0.65rem;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     padding: 3px 8px;
     border-radius: 4px;
-    z-index: 2;
-    pointer-events: none;
+    background: oklch(55% 0.25 25 / 0.15);
+    color: oklch(70% 0.2 25);
+    border: 1px solid oklch(55% 0.25 25 / 0.25);
   }
 
   .video-badge:empty {
     display: none;
   }
 
-  .video-badge {
-    background: oklch(55% 0.25 25 / 0.15);
-    color: oklch(70% 0.2 25);
-    border: 1px solid oklch(55% 0.25 25 / 0.25);
+  .video-badge--link {
+    cursor: pointer;
+    text-decoration: none;
+    transition: background 0.2s ease, border-color 0.2s ease;
+  }
+
+  .video-badge--link:hover {
+    background: oklch(55% 0.25 25 / 0.3);
+    border-color: oklch(55% 0.25 25 / 0.45);
   }
 
     .video-card-wrapper {

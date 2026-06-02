@@ -415,11 +415,17 @@
         card.className = 'card video-card';
 
         // Badge de origen
-        var badge = document.createElement('span');
-        badge.className = 'video-badge';
+        var badge;
         if (entry.source === 'cloudinary') {
+          badge = document.createElement('span');
+          badge.className = 'video-badge';
           badge.textContent = 'Subido';
         } else {
+          badge = document.createElement('a');
+          badge.className = 'video-badge video-badge--link';
+          badge.href = 'https://www.youtube.com/watch?v=' + entry.id;
+          badge.target = '_blank';
+          badge.rel = 'noopener';
           badge.textContent = 'YouTube';
         }
         card.appendChild(badge);
@@ -492,29 +498,17 @@
             iframe.src = 'https://www.youtube.com/embed/' + entry.id + '?_=' + Date.now();
           }
 
-          function reloadAndCheck() {
-            if (embedLoaded) return;
-            reloadVideo();
-            retryTimers.push(setTimeout(showFailed, 8000));
-          }
-
           iframe.addEventListener('load', onLoad);
 
-          // Primer check: si no cargó, mostrar fallback + overlay
-          retryTimers.push(setTimeout(showFailed, 8000));
+          // Check único: si no cargó después de 20s, mostrar fallback + overlay
+          retryTimers.push(setTimeout(showFailed, 20000));
 
-          // Auto-retry schedule (desde el inicio, no desde el fallo)
-          retryTimers.push(setTimeout(reloadAndCheck, 25000)); // 25s total
-          retryTimers.push(setTimeout(reloadAndCheck, 45000)); // 45s total
-
-          // Botón manual de retry
+          // Botón manual de retry — sin auto-retry que interrumpa
           retryOverlay.querySelector('.video-retry-btn').addEventListener('click', function () {
             clearRetryTimers();
             reloadVideo();
-            // Reprogramar desde cero
-            retryTimers.push(setTimeout(showFailed, 8000));
-            retryTimers.push(setTimeout(reloadAndCheck, 25000));
-            retryTimers.push(setTimeout(reloadAndCheck, 45000));
+            // Reprogramar un solo timeout
+            retryTimers.push(setTimeout(showFailed, 20000));
           });
         }
 
