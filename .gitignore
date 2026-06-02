@@ -1,0 +1,14 @@
+# Local Pi runtime state
+.atl/
+
+# IDE and editor files
+.vscode/
+
+# OpenSpec configuration
+openspec/
+
+# Opencode files
+.opencode/
+
+# Pi settings
+.pi/

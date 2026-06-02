@@ -1,103 +1,118 @@
 <!DOCTYPE html>
 <html lang="es">
-    <head>
-        <link rel="stylesheet" href="estilo.css">
-        <link rel="icon" href="Assets/Sashley.jpg">
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>PERSONAL</title>
-    </head>
-    <body>
-        <canvas id="particles"></canvas>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Dashboard Personal — Videos, Música FNF, Avisos y Comentarios">
+  <meta name="theme-color" content="#0a0a0a">
+  <link rel="icon" href="Assets/Sashley.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://www.youtube.com" crossorigin>
+  <link rel="preconnect" href="https://i.ytimg.com" crossorigin>
+  <link rel="stylesheet" href="estilo.css">
+  <title>Personal — Dashboard</title>
+</head>
+<body>
+  <a href="#main" class="skip-link">Saltar al contenido</a>
 
-        <nav id="navbar">
-            <a href="#videos">Videos</a>
-            <a href="#musica">Música FNF</a>
-            <a href="#avisos">Avisos</a>
-        </nav>
+  <canvas id="particles" class="particles-canvas" aria-hidden="true"></canvas>
 
-        <button id="back-to-top" aria-label="Volver arriba">↑</button>
+  <nav id="navbar" aria-label="Dashboard">
+    <span class="nav-brand">Personal</span>
+  </nav>
 
-        <div id="todo_el_contenido">
-            <h1 class="fade">Personal</h1>
+  <main id="main">
+    <div id="dashboard-home" aria-hidden="false">
+      <h1>Dashboard</h1>
+      <div class="dashboard-grid">
+        <a href="#videos" class="dashboard-btn" data-panel="videos" aria-label="Abrir panel de videos">
+          <span class="dashboard-btn-icon">🎬</span>
+          <span class="dashboard-btn-label">Videos</span>
+        </a>
+        <a href="#fnf" class="dashboard-btn" data-panel="fnf" aria-label="Abrir panel de música FNF">
+          <span class="dashboard-btn-icon">🎵</span>
+          <span class="dashboard-btn-label">FNF</span>
+        </a>
+        <a href="#avisos" class="dashboard-btn" data-panel="avisos" aria-label="Abrir panel de avisos">
+          <span class="dashboard-btn-icon">📢</span>
+          <span class="dashboard-btn-label">Avisos</span>
+        </a>
+      </div>
+    </div>
+  </main>
 
-            <section id="videos" class="seccion">
-                <h2 class="fade seccion-titulo">Videos</h2>
-
-                <div class="card fade">
-                    <p>link?</p>
-                    <a href="https://youtu.be/Rayxb-Uflfw" target="_blank">escojer 1</a>
-                    <p class="flecha">↓</p>
-                    <p>Selecciona el correcto</p>
-                    <div class="botones-grupo">
-                        <a href="https://youtu.be/p2CG93XrlHw?si=1sLfjLy8DPvErbTF" target="_blank" class="btn">AQUI</a>
-                        <a href="https://youtube.com/shorts/wC-OCVCxVIg?si=E8MEcYD8rf54PMvm" target="_blank" class="btn">AQUI</a>
-                    </div>
-                </div>
-
-                <div class="card fade">
-                    <p>¿Donde está mi hamburguesa? 🗣️</p>
-                    <video src="Assets/DONDE ESTA MI HAMBURGUESA 🗣️🗣️_viraltiktok _viral_video _apoyo _subiendomemescadadia1(MP4).mp4" controls autoplay muted></video>
-                </div>
-
-                <div class="card fade">
-                    <iframe width="560" height="315" src="https://www.youtube.com/embed/sYuKxwo-7Sw?si=-gIq2UhIEsPynEvL" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </div>
-
-                <div class="card fade">
-                    <iframe width="560" height="315" src="https://www.youtube.com/embed/kqejYrjVuNk?si=GPKAfnU72u94f6MR" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </div>
-
-                <div class="card fade">
-                    <h2>Que es? 💀💀</h2>
-                    <iframe width="560" height="315" src="https://www.youtube.com/embed/gg2kxw2qOPs?si=qjYa05CzLqCYRKIA" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
-                </div>
-
-                <div class="card fade">
-                    <p>Animación</p>
-                    <video src="Assets/ANIMATION.mp4" controls></video>
-                </div>
-            </section>
-
-            <section id="musica" class="seccion">
-                <h2 class="fade seccion-titulo">🎵 Músicas FNF</h2>
-                <div class="card fade musica-lista">
-                    <a href="https://youtu.be/ffjtiJR3j4Q?si=6RF7s8QcPABhepAK" target="_blank">BANGER - FNF: Voiid Chronicles [ OST ]</a>
-                    <a href="https://youtu.be/cywIrV_F4M8?si=rp7Q8reWhOJl7DVs" target="_blank">RUCKUS - FNF: Voiid Chronicles [ OST ]</a>
-                    <a href="https://youtu.be/D4n7wSgNUys?si=y1xmirvyf1bEZ2JC" target="_blank">Come Along With me - FNF: pibby apocalipse</a>
-                    <a href="https://youtu.be/y4Kj-H8eNrM" target="_blank">Boxing Match (Instrumental) - Voiid Chronicles FNF OST</a>
-                </div>
-            </section>
-
-            <section id="avisos" class="seccion">
-                <h2 class="fade seccion-titulo">⚠️ Avisos</h2>
-                <div class="card fade">
-                    <a href="Assets/trauma.jpg" target="_blank" id="robo">me robaron mi telefono 😭<br>mi reaccion:</a>
-                </div>
-
-                <div class="card fade" id="proximos">
-                    <h2>Próximos implementos</h2>
-                    <ul>
-                        <li>Más animaciones y cambio de estilos</li>
-                        <li>Más videos</li>
-                        <li>Caja de comentarios ✅ (ya está abajo)</li>
-                    </ul>
-                </div>
-            </section>
-
-            <section id="comentarios" class="seccion">
-                <h2 class="fade seccion-titulo">💬 Comentarios</h2>
-                <div class="card fade">
-                    <form id="form-comentario">
-                        <input type="text" id="nombre-input" placeholder="Tu nombre" maxlength="30" required>
-                        <textarea id="comentario-input" placeholder="Escribe tu comentario..." maxlength="300" required></textarea>
-                        <button type="submit" class="btn">Comentar</button>
-                    </form>
-                    <div id="lista-comentarios"></div>
-                </div>
-            </section>
+  <!-- Panel: Videos -->
+  <section id="videos" class="panel" role="dialog" aria-label="Videos" aria-hidden="true">
+    <div class="panel-header">
+      <button class="panel-back" aria-label="Volver al Dashboard">&larr; Volver</button>
+      <h2 class="panel-title">Videos</h2>
+    </div>
+    <div class="panel-content">
+      <div class="card video-form-card">
+        <div class="video-form">
+          <input type="url" id="video-url-input" placeholder="Pega el enlace de YouTube..." aria-label="URL del video de YouTube">
+          <button id="video-add-btn" class="btn">Agregar</button>
         </div>
+        <p id="video-error" class="video-error" role="alert" hidden></p>
+      </div>
 
-        <script src="comportamiento.js"></script>
-    </body>
+      <div id="video-list" aria-label="Tus videos guardados"></div>
+    </div>
+  </section>
+
+  <!-- Panel: FNF Música -->
+  <section id="fnf" class="panel" role="dialog" aria-label="Música FNF" aria-hidden="true">
+    <div class="panel-header">
+      <button class="panel-back" aria-label="Volver al Dashboard">&larr; Volver</button>
+      <h2 class="panel-title">Música FNF</h2>
+    </div>
+    <div class="panel-content">
+      <div class="card musica-lista">
+        <a href="https://youtu.be/ffjtiJR3j4Q?si=6RF7s8QcPABhepAK" target="_blank" rel="noopener">BANGER — FNF: Voiid Chronicles [OST]</a>
+        <a href="https://youtu.be/cywIrV_F4M8?si=rp7Q8reWhOJl7DVs" target="_blank" rel="noopener">RUCKUS — FNF: Voiid Chronicles [OST]</a>
+        <a href="https://youtu.be/D4n7wSgNUys?si=y1xmirvyf1bEZ2JC" target="_blank" rel="noopener">Come Along With Me — FNF: Pibby Apocalipse</a>
+        <a href="https://youtu.be/y4Kj-H8eNrM" target="_blank" rel="noopener">Boxing Match (Instrumental) — Voiid Chronicles FNF OST</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Panel: Avisos y Comentarios -->
+  <section id="avisos" class="panel" role="dialog" aria-label="Avisos y Comentarios" aria-hidden="true">
+    <div class="panel-header">
+      <button class="panel-back" aria-label="Volver al Dashboard">&larr; Volver</button>
+      <h2 class="panel-title">Avisos</h2>
+    </div>
+    <div class="panel-content">
+      <div class="card">
+        <a href="Assets/trauma.jpg" target="_blank" rel="noopener" id="robo">
+          me robaron mi telefono 😭<br>mi reaccion:
+        </a>
+      </div>
+
+      <div class="card" id="proximos">
+        <h2>Próximos implementos</h2>
+        <ul>
+          <li>Más animaciones y cambio de estilos ✅</li>
+          <li>Más videos</li>
+          <li>Caja de comentarios ✅</li>
+        </ul>
+      </div>
+
+      <h2 class="section-subtitle">Comentarios</h2>
+      <div class="card">
+        <form id="form-comentario">
+          <label for="nombre-input" class="sr-only">Tu nombre</label>
+          <input type="text" id="nombre-input" placeholder="Tu nombre" maxlength="30" required autocomplete="name">
+          <label for="comentario-input" class="sr-only">Escribe tu comentario</label>
+          <textarea id="comentario-input" placeholder="Escribe tu comentario..." maxlength="300" required></textarea>
+          <button type="submit" class="btn">Comentar</button>
+        </form>
+        <div id="lista-comentarios" role="log" aria-live="polite" aria-label="Comentarios recientes"></div>
+      </div>
+    </div>
+  </section>
+
+  <script src="comportamiento.js" defer></script>
+</body>
 </html>
