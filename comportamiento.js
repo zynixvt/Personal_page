@@ -84,6 +84,7 @@
       if (!panel) return;
 
       PanelController.activePanel = panelId;
+
       panel.classList.add('active');
       panel.setAttribute('aria-hidden', 'false');
 
@@ -97,15 +98,81 @@
       // Focus back button
       var backBtn = panel.querySelector('.panel-back');
       if (backBtn) {
-        // Small delay for transition to start
         requestAnimationFrame(function () {
           backBtn.focus();
         });
       }
+
+      // Animación secuencial para videos (después de que el panel termine de entrar)
+      if (panelId === 'videos') {
+        // Timing:
+        //   T=0:    panel empieza a entrar (350ms transition)
+        //   T=650:  form card anima (panel in + 0.3s wait)
+        //   T=1050: form card termina (0.4s duration)
+        //   T=1350: videos visibles (≥50%) animan (form done + 0.3s wait)
+
+        // Desconectar observer: si quedara activo, dispararía al abrir el panel
+        // y agregaría la clase de animación antes de tiempo. Se reconecta
+        // en animateEntries al final de la ventana de animación.
+        if (YouTubeManager._observer) {
+          YouTubeManager._observer.disconnect();
+        }
+
+        // Reset form card para re-open
+        var formCard = document.querySelector('.video-form-card');
+        if (formCard) {
+          formCard.classList.remove('video-form-card--enter');
+        }
+
+        // Reset video cards para re-open
+        document.querySelectorAll('#video-list .video-card').forEach(function (c) {
+          c.classList.remove('video-card--enter');
+          c._animated = false;
+        });
+
+        // 1) Form card animation: T=650ms (panel in + 0.3s)
+        setTimeout(function () {
+          if (formCard) {
+            // Force reflow: garantiza re-trigger de la animación en re-open
+            void formCard.offsetWidth;
+            formCard.classList.add('video-form-card--enter');
+          }
+        }, 650);
+
+        // 2) Videos animation: T=1350ms (form done + 0.3s)
+        //    animateEntries internamente filtra por ≥50% de visibilidad
+        setTimeout(function () {
+          YouTubeManager.animateEntries();
+        }, 1350);
+      }
+
+      // Staggered entrance for list items
+      setTimeout(function () {
+        if (panelId === 'fnf') {
+          document.querySelectorAll('.musica-lista a').forEach(function (el, i) {
+            el.style.setProperty('--i', i);
+            el.classList.add('slide-in-up');
+          });
+        }
+        if (panelId === 'avisos') {
+          document.querySelectorAll('#proximos li, .comentario-item').forEach(function (el, i) {
+            el.style.setProperty('--i', i);
+            el.classList.add('slide-in-up');
+          });
+        }
+      }, 400);
     },
 
     close: function () {
       if (!PanelController.activePanel) return;
+
+      // Disconnect observer when closing videos panel (reconnected on next open)
+      if (PanelController.activePanel === 'videos') {
+        if (YouTubeManager._observer) {
+          YouTubeManager._observer.disconnect();
+          YouTubeManager._observer = null;
+        }
+      }
 
       var panel = PanelController.panels.get(PanelController.activePanel);
       if (panel) {
@@ -121,6 +188,9 @@
 
       // Resume particles
       ParticleSystem.resume();
+
+      // Pausar videos al salir del panel
+      YouTubeManager.pauseAll();
 
       // Clear hash without triggering hashchange
       if (window.location.hash) {
@@ -393,11 +463,382 @@
       localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(entries));
     },
 
+    // Colección de players YT.Player (entry.id → YT.Player)
+    _players: {},
+    _playerIdCounter: 0,
+    _pendingHandlers: new Map(),
+
+    _createPlayer: function (id, targetDiv, handlers) {
+      // Destruir player existente para este id
+      if (YouTubeManager._players[id]) {
+        try { YouTubeManager._players[id].destroy(); } catch (_) {}
+        delete YouTubeManager._players[id];
+      }
+
+      function init() {
+        if (typeof YT === 'undefined' || !YT.Player) return false;
+        if (YouTubeManager._players[id]) return true;
+
+        // Si el target fue removido del DOM (render() entre medio), saltear
+        if (!document.getElementById(targetDiv.id)) return true;
+
+        try {
+          var player = new YT.Player(targetDiv.id, {
+            videoId: id,
+            width: '100%',
+            height: '100%',
+            playerVars: {
+              playsinline: 1,
+              rel: 0
+            },
+            events: {
+              onReady: handlers.onReady || function () {},
+              onStateChange: handlers.onStateChange || function () {},
+              onError: handlers.onError || function () {}
+            }
+          });
+          YouTubeManager._players[id] = player;
+        } catch (e) {
+          return false;
+        }
+        return true;
+      }
+
+      if (!init()) {
+        // API aún no lista
+        if (!window._ytPendingPlayers) window._ytPendingPlayers = [];
+        window._ytPendingPlayers.push(init);
+
+        // Polling fallback por si onYouTubeIframeAPIReady nunca se dispara
+        if (!window._ytPollTimer) {
+          window._ytPollTimer = setInterval(function () {
+            if (typeof YT !== 'undefined' && YT.Player) {
+              clearInterval(window._ytPollTimer);
+              window._ytPollTimer = null;
+              if (window._ytPendingPlayers) {
+                var q = window._ytPendingPlayers.slice();
+                window._ytPendingPlayers = [];
+                q.forEach(function (fn) { fn(); });
+              }
+            }
+          }, 500);
+          setTimeout(function () {
+            if (window._ytPollTimer) {
+              clearInterval(window._ytPollTimer);
+              window._ytPollTimer = null;
+            }
+          }, 60000);
+        }
+      }
+    },
+
+    _pauseOthers: function (currentId, excludeVideoEl) {
+      Object.keys(YouTubeManager._players).forEach(function (id) {
+        if (id !== currentId) {
+          var p = YouTubeManager._players[id];
+          if (p && p.pauseVideo) {
+            try { p.pauseVideo(); } catch (_) {}
+          }
+        }
+      });
+      // También pausar videos de Cloudinary (excepto el que excluimos)
+      document.querySelectorAll('#video-list .video-card video').forEach(function (v) {
+        if (v === excludeVideoEl) return;
+        try { v.pause(); } catch (_) {}
+      });
+    },
+
+    _destroyPlayers: function () {
+      Object.keys(YouTubeManager._players).forEach(function (id) {
+        var p = YouTubeManager._players[id];
+        if (p && p.destroy) {
+          try { p.destroy(); } catch (_) {}
+        }
+      });
+      YouTubeManager._players = {};
+    },
+
+    _buildCard: function (entry) {
+      var card = document.createElement('div');
+      card.className = 'card video-card';
+
+      // Badge de origen + status indicator en un header row
+      var badge;
+      if (entry.source === 'cloudinary') {
+        badge = document.createElement('span');
+        badge.className = 'video-badge';
+        badge.textContent = 'Subido';
+      } else {
+        badge = document.createElement('a');
+        badge.className = 'video-badge video-badge--link';
+        badge.href = 'https://www.youtube.com/watch?v=' + entry.id;
+        badge.target = '_blank';
+        badge.rel = 'noopener';
+        badge.textContent = 'YouTube';
+      }
+
+      // Status indicator (dot + texto deslizante)
+      var statusDot = document.createElement('span');
+      statusDot.className = 'video-status-dot';
+      var statusText = document.createElement('span');
+      statusText.className = 'video-status-text';
+      statusText.textContent = 'Cargando...';
+      card._state = 'loading';
+
+      var statusEl = document.createElement('span');
+      statusEl.className = 'video-status';
+      statusEl.appendChild(statusDot);
+      statusEl.appendChild(statusText);
+      // El texto se desliza al animar la card (no acá)
+
+      // Helper para cambiar estado del status con slide-out → slide-in
+      var _statusTimeoutId;
+      function setStatus(state, fast) {
+        clearTimeout(_statusTimeoutId);
+        // Save previous state for slide-out color preservation
+        var prevState = card._state || 'loading';
+        card._state = state;
+        var delay = fast ? 150 : 400;
+
+        if (state === 'hide') {
+          statusText.className = 'video-status-text status-slide-out';
+          // Preserve color while sliding out
+          if (prevState === 'ready') statusText.classList.add('status-ready');
+          else if (prevState === 'error') statusText.classList.add('status-error');
+          return;
+        }
+
+        // Slide out current text WITH its color preserved
+        statusText.className = 'video-status-text status-slide-out';
+        if (prevState === 'ready') statusText.classList.add('status-ready');
+        else if (prevState === 'error') statusText.classList.add('status-error');
+
+        _statusTimeoutId = setTimeout(function () {
+          // Resetear clases y poner nuevo estado
+          statusDot.className = 'video-status-dot';
+          statusText.className = 'video-status-text';
+          if (state === 'ready') {
+            statusDot.classList.add('status-ready');
+            statusText.classList.add('status-ready');
+            statusText.textContent = 'Listo';
+            statusText.classList.add('status-slide-in');
+
+            // Auto-hide "Listo" after 2s — KEEP green while sliding out
+            _statusTimeoutId = setTimeout(function () {
+              statusText.className = 'video-status-text status-slide-out';
+              statusText.classList.add('status-ready');
+            }, 2000);
+          } else if (state === 'error') {
+            statusDot.classList.add('status-error');
+            statusText.classList.add('status-error');
+            statusText.textContent = 'Error de carga';
+            statusText.classList.add('status-slide-in');
+            // Stays visible until retry
+          } else {
+            // loading
+            statusDot.classList.add('status-loading');
+            statusText.classList.add('status-loading');
+            statusText.textContent = 'Cargando...';
+            statusText.classList.add('status-slide-in');
+          }
+        }, delay);
+      }
+
+      // Re-trigger status animation based on current state (for scroll re-entry)
+      card._triggerStatus = function () {
+        setStatus(card._state || 'loading', true);
+      };
+
+      // Header row: status izq | badge der
+      var headerRow = document.createElement('div');
+      headerRow.className = 'video-card-header';
+      badge.style.marginLeft = 'auto';
+      headerRow.appendChild(statusEl);
+      headerRow.appendChild(badge);
+      card.appendChild(headerRow);
+
+      var wrapper = document.createElement('div');
+      wrapper.className = 'video-card-wrapper';
+
+      if (entry.source === 'cloudinary') {
+        // Cloudinary: render como <video>
+        var videoEl = document.createElement('video');
+        videoEl.src = entry.url;
+        videoEl.controls = true;
+        videoEl.playsInline = true;
+        videoEl.preload = 'metadata';
+        videoEl.title = entry.title || 'Video subido';
+        wrapper.appendChild(videoEl);
+
+        // Al reproducir un video subido, pausar los YT players y otros Cloudinary
+        videoEl.addEventListener('play', function () {
+          YouTubeManager._pauseOthers(null, videoEl);
+        });
+      } else {
+        // YouTube: miniatura precargada + YT.Player debajo
+        var thumb = document.createElement('img');
+        thumb.className = 'video-thumb';
+        thumb.src = 'https://i.ytimg.com/vi/' + entry.id + '/hqdefault.jpg';
+        thumb.alt = 'Miniatura';
+        thumb.setAttribute('loading', 'lazy');
+        thumb.setAttribute('fetchpriority', 'high');
+        wrapper.appendChild(thumb);
+
+        // Target para YT.Player — la API crea el iframe internamente
+        var playerId = 'ytp-' + entry.id + '-' + (++YouTubeManager._playerIdCounter);
+        var playerTarget = document.createElement('div');
+        playerTarget.id = playerId;
+        playerTarget.className = 'video-player-target';
+        wrapper.appendChild(playerTarget);
+
+        // NOTA: ya no creamos un overlay custom de play. El player de YouTube
+        // maneja su propia UI (botón de play, controles, etc.). La miniatura
+        // local cubre el iframe hasta que el video está listo (estado CUED),
+        // momento en el que se revela la interfaz nativa de YT.
+
+        // Overlay de retry
+        var retryOverlay = document.createElement('div');
+        retryOverlay.className = 'video-retry';
+        retryOverlay.innerHTML = '<span class="video-retry-msg">No se pudo cargar</span><button class="btn video-retry-btn">↻ Reintentar</button>';
+        wrapper.appendChild(retryOverlay);
+
+        var fallback = document.createElement('a');
+        fallback.className = 'video-fallback';
+        fallback.href = 'https://www.youtube.com/watch?v=' + entry.id;
+        fallback.target = '_blank';
+        fallback.rel = 'noopener';
+        fallback.textContent = 'Ver en YouTube';
+        fallback.style.display = 'none';
+        wrapper.appendChild(fallback);
+
+        var embedLoaded = false;
+        var retryTimers = [];
+
+        function clearRetryTimers() {
+          retryTimers.forEach(function (t) { clearTimeout(t); });
+          retryTimers = [];
+        }
+
+        function onReady() {
+          embedLoaded = true;
+          clearRetryTimers();
+          retryOverlay.style.display = 'none';
+          fallback.style.display = 'none';
+          card.dataset.ytReady = '1';
+          setStatus('ready');
+          // Fallback: el estado CUED no siempre dispara en la YT IFrame API
+          // (a veces salta de UNSTARTED directo a BUFFERING/PLAYING). Después
+          // de 800ms (tiempo suficiente para que el iframe renderice su poster
+          // image y botón de play de YT) quitamos el thumb de forma segura.
+          setTimeout(function () {
+            thumb.style.opacity = '0';
+          }, 800);
+        }
+
+        function onStateChange(event) {
+          if (event.data === YT.PlayerState.PLAYING) {
+            YouTubeManager._pauseOthers(entry.id);
+            // Video reproduciendo → pausar los demás
+          } else if (event.data === YT.PlayerState.CUED) {
+            // Si CUED dispara (no siempre lo hace), esperamos 300ms para que
+            // el iframe termine de renderizar su UI antes de quitar el thumb.
+            // Si no dispara, el fallback de 800ms en onReady se encarga.
+            setTimeout(function () {
+              thumb.style.opacity = '0';
+            }, 300);
+          }
+        }
+
+        function onError() {
+          showFailed();
+        }
+
+        function showFailed() {
+          if (embedLoaded) return;
+          retryOverlay.style.display = 'flex';
+          fallback.style.display = 'flex';
+          setStatus('error');
+        }
+
+        function reloadVideo() {
+          card.dataset.ytReady = '';
+          retryOverlay.style.display = 'none';
+          fallback.style.display = 'none';
+          thumb.style.opacity = '1';
+          embedLoaded = false;
+          // Status: error → loading (rápido)
+          setStatus('loading', true);
+          var player = YouTubeManager._players[entry.id];
+          if (player && player.loadVideoById) {
+            player.loadVideoById(entry.id);
+          } else if (YouTubeManager._pendingHandlers.has(playerId)) {
+            // Player no creado aún — forzar creación ahora
+            YouTubeManager._pendingHandlers.delete(playerId);
+            delete card.dataset.ytPending;
+            YouTubeManager._createPlayer(entry.id, playerTarget, {
+              onReady: onReady,
+              onStateChange: onStateChange,
+              onError: onError
+            });
+          } else {
+            // Recrear player
+            YouTubeManager._createPlayer(entry.id, playerTarget, {
+              onReady: onReady,
+              onStateChange: onStateChange,
+              onError: onError
+            });
+          }
+        }
+
+        // Guardar handlers para crear el player cuando la card esté cerca del viewport
+        YouTubeManager._pendingHandlers.set(playerId, {
+          entryId: entry.id,
+          onReady: onReady,
+          onStateChange: onStateChange,
+          onError: onError
+        });
+        card.dataset.ytPending = playerId;
+        // No crear el player ahora — se crea en setupScrollOptimizer cuando entra al viewport
+
+        retryTimers.push(setTimeout(showFailed, 20000));
+
+        retryOverlay.querySelector('.video-retry-btn').addEventListener('click', function () {
+          clearRetryTimers();
+          reloadVideo();
+          retryTimers.push(setTimeout(showFailed, 20000));
+        });
+      }
+
+      card.appendChild(wrapper);
+
+      var deleteBtn = document.createElement('button');
+      deleteBtn.className = 'btn btn-outline video-delete';
+      deleteBtn.textContent = 'Eliminar';
+      deleteBtn.addEventListener('click', function () {
+        // Destruir player primero si existe
+        var p = YouTubeManager._players[entry.id];
+        if (p) { try { p.destroy(); } catch (_) {} delete YouTubeManager._players[entry.id]; }
+        YouTubeManager.remove(entry.id);
+        // Buscar el contenedor en el DOM (más seguro que variable global)
+        var listContainer = document.getElementById('video-list') || containerRef;
+        if (listContainer) YouTubeManager.render(listContainer);
+      });
+      card.appendChild(deleteBtn);
+
+      return card;
+    },
+
     render: function (container) {
+      YouTubeManager._destroyPlayers();
+      YouTubeManager._pendingHandlers.clear();
+      if (YouTubeManager._observer) {
+        YouTubeManager._observer.disconnect();
+        YouTubeManager._observer = null;
+      }
+      containerRef = container;
       var videos = YouTubeManager.getAll();
       container.innerHTML = '';
 
-      // Capacity warning
       if (YouTubeManager.isNearCapacity()) {
         var warn = document.createElement('p');
         warn.className = 'video-capacity-warn';
@@ -411,122 +852,209 @@
       }
 
       videos.forEach(function (entry) {
-        var card = document.createElement('div');
-        card.className = 'card video-card';
-
-        // Badge de origen
-        var badge;
-        if (entry.source === 'cloudinary') {
-          badge = document.createElement('span');
-          badge.className = 'video-badge';
-          badge.textContent = 'Subido';
-        } else {
-          badge = document.createElement('a');
-          badge.className = 'video-badge video-badge--link';
-          badge.href = 'https://www.youtube.com/watch?v=' + entry.id;
-          badge.target = '_blank';
-          badge.rel = 'noopener';
-          badge.textContent = 'YouTube';
-        }
-        card.appendChild(badge);
-
-        var wrapper = document.createElement('div');
-        wrapper.className = 'video-card-wrapper';
-
-        if (entry.source === 'cloudinary') {
-          // Cloudinary: render como <video>
-          var videoEl = document.createElement('video');
-          videoEl.src = entry.url;
-          videoEl.controls = true;
-          videoEl.playsInline = true;
-          videoEl.preload = 'metadata';
-          videoEl.title = entry.title || 'Video subido';
-          wrapper.appendChild(videoEl);
-        } else {
-          // YouTube: render como <iframe>
-          var iframe = document.createElement('iframe');
-          iframe.src = 'https://www.youtube.com/embed/' + entry.id;
-          iframe.title = 'YouTube video';
-          iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
-          iframe.setAttribute('allowfullscreen', '');
-          iframe.setAttribute('loading', 'lazy');
-          wrapper.appendChild(iframe);
-
-          // Overlay de retry (se muestra si no carga después del timeout)
-          var retryOverlay = document.createElement('div');
-          retryOverlay.className = 'video-retry';
-          retryOverlay.innerHTML = '<span class="video-retry-msg">No se pudo cargar</span><button class="btn video-retry-btn">↻ Reintentar</button>';
-          wrapper.appendChild(retryOverlay);
-
-          var fallback = document.createElement('a');
-          fallback.className = 'video-fallback';
-          fallback.href = 'https://www.youtube.com/watch?v=' + entry.id;
-          fallback.target = '_blank';
-          fallback.rel = 'noopener';
-          fallback.textContent = 'Ver en YouTube';
-          fallback.style.display = 'none';
-          wrapper.appendChild(fallback);
-
-          var embedLoaded = false;
-          var retryTimers = [];
-
-          function clearRetryTimers() {
-            retryTimers.forEach(function (t) { clearTimeout(t); });
-            retryTimers = [];
-          }
-
-          function onLoad() {
-            embedLoaded = true;
-            clearRetryTimers();
-            retryOverlay.style.display = 'none';
-            fallback.style.display = 'none';
-            iframe.style.opacity = '1';
-          }
-
-          function showFailed() {
-            if (embedLoaded) return;
-            retryOverlay.style.display = 'flex';
-            fallback.style.display = 'flex';
-            iframe.style.opacity = '0.3';
-          }
-
-          function reloadVideo() {
-            retryOverlay.style.display = 'none';
-            fallback.style.display = 'none';
-            iframe.style.opacity = '1';
-            // Cache-busting para forzar recarga desde cero
-            iframe.src = 'https://www.youtube.com/embed/' + entry.id + '?_=' + Date.now();
-          }
-
-          iframe.addEventListener('load', onLoad);
-
-          // Check único: si no cargó después de 20s, mostrar fallback + overlay
-          retryTimers.push(setTimeout(showFailed, 20000));
-
-          // Botón manual de retry — sin auto-retry que interrumpa
-          retryOverlay.querySelector('.video-retry-btn').addEventListener('click', function () {
-            clearRetryTimers();
-            reloadVideo();
-            // Reprogramar un solo timeout
-            retryTimers.push(setTimeout(showFailed, 20000));
-          });
-        }
-
-        card.appendChild(wrapper);
-
-        var deleteBtn = document.createElement('button');
-        deleteBtn.className = 'btn btn-outline video-delete';
-        deleteBtn.textContent = 'Eliminar';
-        deleteBtn.addEventListener('click', function () {
-          YouTubeManager.remove(entry.id);
-          YouTubeManager.render(container);
-        });
-        card.appendChild(deleteBtn);
-
+        var card = YouTubeManager._buildCard(entry);
         container.appendChild(card);
+      });
+      YouTubeManager.setupScrollOptimizer();
+    },
+
+    renderOne: function (entry, container, opts) {
+      containerRef = container;
+      opts = opts || {};
+      var card = YouTubeManager._buildCard(entry);
+
+      if (opts.animate !== false) {
+        card.classList.add('video-card--enter');
+        if (opts.delay) {
+          card.style.setProperty('--delay', opts.delay + 's');
+        }
+      }
+
+      if (opts.prepend) {
+        container.insertBefore(card, container.firstChild);
+      } else {
+        container.appendChild(card);
+      }
+
+      // RenderOne siempre agrega una card visible — crear player inmediatamente
+      var pid = card.dataset.ytPending;
+      if (pid) {
+        card.removeAttribute('data-yt-pending');
+        var h = YouTubeManager._pendingHandlers.get(pid);
+        if (h) {
+          YouTubeManager._pendingHandlers.delete(pid);
+          var target = document.getElementById(pid);
+          if (target) {
+            YouTubeManager._createPlayer(h.entryId, target, {
+              onReady: h.onReady,
+              onStateChange: h.onStateChange,
+              onError: h.onError
+            });
+          }
+        }
+      }
+
+      YouTubeManager.setupScrollOptimizer();
+      return card;
+    },
+
+    setupScrollOptimizer: function () {
+      if (YouTubeManager._observer) {
+        YouTubeManager._observer.disconnect();
+      }
+
+      var scrollContainer = document.querySelector('.panel-content');
+      if (!scrollContainer) return;
+
+      // Single IntersectionObserver: handles YT player creation, entrance AND exit.
+      // threshold [0.5] dispara al cruzar 50% en cualquier dirección:
+      //   isIntersecting=true  → card entró (o re-entró) al viewport
+      //   isIntersecting=false → card salió del viewport (debajo del 50%)
+      // El gate `card._animated` previene que cards no-visibles en panel open
+      // inicial disparen exit al setup (porque aún no fueron animadas).
+      YouTubeManager._observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          var card = entry.target;
+          // Índice de la card en la lista → se usa para stagger tanto en
+          // entrance como en exit (mismo delay = simetría visual)
+          var allCards = document.querySelectorAll('#video-list .video-card');
+          var idx = Array.prototype.indexOf.call(allCards, card);
+
+          if (entry.isIntersecting) {
+            // === ENTRANCE / RE-ENTRY ===
+
+            // Si la card estaba saliendo, cancelar el exit y re-disparar entrance.
+            // El force reflow garantiza que el browser registre la remoción de exit
+            // antes de re-agregar enter → animación arranca desde el estado final
+            // del exit (opacity:0, translate:0 24px) que coincide con el from del
+            // entrance → sin flash.
+            if (card.classList.contains('video-card--exit')) {
+              card.classList.remove('video-card--exit');
+              void card.offsetWidth; // force reflow
+            }
+
+            // Create YT player if pending (always, not gated by _animated)
+            var pid = card.dataset.ytPending;
+            if (pid) {
+              card.removeAttribute('data-yt-pending');
+              var h = YouTubeManager._pendingHandlers.get(pid);
+              if (h) {
+                YouTubeManager._pendingHandlers.delete(pid);
+                var target = document.getElementById(pid);
+                if (target) {
+                  YouTubeManager._createPlayer(h.entryId, target, {
+                    onReady: h.onReady,
+                    onStateChange: h.onStateChange,
+                    onError: h.onError
+                  });
+                }
+              }
+            }
+
+            // Entrance animation (primera vez o re-entry) con stagger por índice
+            if (!card._animated) {
+              card._animated = true;
+              card.style.setProperty('--delay', Math.min(idx, 10) * 0.08 + 's');
+              card.classList.add('video-card--enter');
+            }
+
+            // Status text re-animation for scroll re-entry (state-aware)
+            if (card._triggerStatus) {
+              setTimeout(function (crd) {
+                return function () {
+                  crd._triggerStatus();
+                };
+              }(card), 600);
+            }
+          } else {
+            // === EXIT ===
+
+            // Solo aplicar exit si la card ya fue animada antes. Esto previene
+            // que cards que aún no entraron (panel open inicial, observer setup)
+            // disparen exit al ser evaluadas con isIntersecting=false.
+            if (!card.classList.contains('video-card--exit') && card._animated) {
+              card._animated = false;
+              // Stagger por índice: cards de arriba (índice bajo) salen primero
+              // al hacer scroll up, y arrancan su animación antes → salida
+              // secuencial de arriba hacia abajo.
+              card.style.setProperty('--delay', Math.min(idx, 10) * 0.08 + 's');
+              card.classList.add('video-card--exit');
+            }
+
+            // Restore thumb si la card no está lista (el player de YT no cargó aún)
+            if (!card.dataset.ytReady) {
+              var thumb = card.querySelector('.video-thumb');
+              if (thumb) thumb.style.opacity = '1';
+            }
+          }
+        });
+      }, {
+        root: scrollContainer,
+        rootMargin: '0px 0px -50px 0px',
+        threshold: [0.5]
+      });
+
+      document.querySelectorAll('#video-list .video-card').forEach(function (card) {
+        YouTubeManager._observer.observe(card);
+      });
+    },
+
+    // Pausar todos los videos (YT.Player + Cloudinary)
+    pauseAll: function () {
+      Object.keys(YouTubeManager._players).forEach(function (id) {
+        var p = YouTubeManager._players[id];
+        if (p && p.pauseVideo) {
+          try { p.pauseVideo(); } catch (_) {}
+        }
+      });
+      document.querySelectorAll('#video-list .video-card video').forEach(function (v) {
+        try { v.pause(); } catch (_) {}
+      });
+    },
+
+    animateEntries: function () {
+      var cards = document.querySelectorAll('#video-list .video-card');
+      if (cards.length === 0) return;
+
+      // Reconnect observer: fue desconectado en PanelController.open para
+      // evitar que disparara durante la ventana de animación. setupScrollOptimizer
+      // desconecta el existente y crea uno fresh.
+      YouTubeManager.setupScrollOptimizer();
+
+      // Visibility check: solo animar cards con ≥50% de visibilidad en el scroll
+      // container. Las que no pasen este umbral las maneja el IntersectionObserver
+      // cuando entren al viewport (esa animación se afina en el fix de scroll).
+      var scrollContainer = document.querySelector('.panel-content');
+      var containerRect = scrollContainer ? scrollContainer.getBoundingClientRect() : null;
+
+      // Animar cards visibles con stagger de 80ms
+      cards.forEach(function (card, i) {
+        if (containerRect) {
+          var cardRect = card.getBoundingClientRect();
+          var visibleTop = Math.max(cardRect.top, containerRect.top);
+          var visibleBottom = Math.min(cardRect.bottom, containerRect.bottom);
+          var visibleHeight = Math.max(0, visibleBottom - visibleTop);
+          // Skip cards con menos del 50% visible
+          if (visibleHeight < cardRect.height * 0.5) return;
+        }
+
+        // Stagger 80ms por card → se sienten "una por una" sin ser lento
+        card.style.setProperty('--delay', Math.min(i, 10) * 0.08 + 's');
+        card._animated = true;
+        card.classList.add('video-card--enter');
+      });
+
+      // Trigger status text solo para cards animadas (las que sí se ven)
+      cards.forEach(function (card) {
+        if (card._animated && card._triggerStatus) {
+          setTimeout(function (crd) {
+            return function () { crd._triggerStatus(); };
+          }(card), 600);
+        }
       });
     }
   };
+  var containerRef = null;
 
   // ======================================================================
   // Particle System with spatial grid optimization + pause/resume
@@ -598,7 +1126,6 @@
 
       var PARTICLE_COUNT = ParticleSystem._slowDevice ? 20 : 45;
       var CONNECT_DIST = ParticleSystem._slowDevice ? 60 : 100;
-      var CELL_SIZE = CONNECT_DIST;
       var COLORS = [{ h: 25 }, { h: 280 }, { h: 190 }];
 
       ParticleSystem.particles = Array.from({ length: PARTICLE_COUNT }, function (_, i) {
@@ -630,7 +1157,7 @@
         if (!pageVisible) return;
         if (ParticleSystem.paused) return;
 
-        // Frame budget: si el dispositivo es lento, saltear frames pares
+        // Frame budget: solo en dispositivos lentos, saltear frames pares
         if (ParticleSystem._slowDevice) {
           ParticleSystem._frameSkip++;
           if (ParticleSystem._frameSkip % 2 === 0) {
@@ -640,10 +1167,13 @@
         }
 
         ctx.clearRect(0, 0, W, H);
+        var CONNECT_DIST_SQ = CONNECT_DIST * CONNECT_DIST;
+        var pts = ParticleSystem.particles;
+        var n = pts.length;
 
-        // Update particles
-        for (var i = 0; i < ParticleSystem.particles.length; i++) {
-          var p = ParticleSystem.particles[i];
+        // === UPDATE (separado del draw) ===
+        for (var i = 0; i < n; i++) {
+          var p = pts[i];
           var dx = mouse.x - p.x;
           var dy = mouse.y - p.y;
           var dist = Math.sqrt(dx * dx + dy * dy) || 1;
@@ -671,54 +1201,36 @@
           if (p.x > W + 40) p.x = -40;
           if (p.y < -40) p.y = H + 40;
           if (p.y > H + 40) p.y = -40;
+        }
 
+        // === DRAW: batch de partículas (update + draw separados) ===
+        for (var i2 = 0; i2 < n; i2++) {
+          var p2 = pts[i2];
           ctx.beginPath();
-          ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          ctx.fillStyle = 'oklch(' + (p.alpha * 100) + '% 0.22 ' + p.hue + ')';
+          ctx.arc(p2.x, p2.y, p2.size, 0, Math.PI * 2);
+          ctx.fillStyle = 'oklch(' + (p2.alpha * 100) + '% 0.22 ' + p2.hue + ')';
           ctx.fill();
         }
 
-        // Spatial grid for connection optimization
-        var grid = new Map();
-
-        for (var i2 = 0; i2 < ParticleSystem.particles.length; i2++) {
-          var p2 = ParticleSystem.particles[i2];
-          var col = Math.floor(p2.x / CELL_SIZE);
-          var row = Math.floor(p2.y / CELL_SIZE);
-          var key = col + ',' + row;
-          if (!grid.has(key)) grid.set(key, []);
-          grid.get(key).push(i2);
-        }
-
-        // Only connect particles in same or adjacent cells
-        for (var i3 = 0; i3 < ParticleSystem.particles.length; i3++) {
-          var p3 = ParticleSystem.particles[i3];
-          var colC = Math.floor(p3.x / CELL_SIZE);
-          var rowC = Math.floor(p3.y / CELL_SIZE);
-
-          for (var dc = -1; dc <= 1; dc++) {
-            for (var dr = -1; dr <= 1; dr++) {
-              var nk = (colC + dc) + ',' + (rowC + dr);
-              var cell = grid.get(nk);
-              if (!cell) continue;
-
-              for (var ci = 0; ci < cell.length; ci++) {
-                var j = cell[ci];
-                if (j <= i3) continue;
-
-                var dx2 = p3.x - ParticleSystem.particles[j].x;
-                var dy2 = p3.y - ParticleSystem.particles[j].y;
-                var dist2 = dx2 * dx2 + dy2 * dy2;
-
-                if (dist2 < CONNECT_DIST * CONNECT_DIST) {
-                  var alpha = 0.15 * (1 - Math.sqrt(dist2) / CONNECT_DIST);
-                  ctx.beginPath();
-                  ctx.moveTo(p3.x, p3.y);
-                  ctx.lineTo(ParticleSystem.particles[j].x, ParticleSystem.particles[j].y);
-                  ctx.strokeStyle = 'oklch(55% 0.25 25 / ' + alpha + ')';
-                  ctx.lineWidth = 0.5;
-                  ctx.stroke();
-                }
+        // === CONNECTIONS: O(n²) directo, sin spatial grid (más rápido para <50 partículas) ===
+        if (!ParticleSystem._slowDevice) {
+          for (var i3 = 0; i3 < n; i3++) {
+            var a = pts[i3];
+            for (var j = i3 + 1; j < n; j++) {
+              var b = pts[j];
+              var ddx = a.x - b.x;
+              var ddy = a.y - b.y;
+              if (ddx > CONNECT_DIST || ddx < -CONNECT_DIST) continue;
+              if (ddy > CONNECT_DIST || ddy < -CONNECT_DIST) continue;
+              var d2 = ddx * ddx + ddy * ddy;
+              if (d2 < CONNECT_DIST_SQ) {
+                var alpha = 0.15 * (1 - Math.sqrt(d2) / CONNECT_DIST);
+                ctx.beginPath();
+                ctx.moveTo(a.x, a.y);
+                ctx.lineTo(b.x, b.y);
+                ctx.strokeStyle = 'oklch(55% 0.25 25 / ' + alpha + ')';
+                ctx.lineWidth = 0.5;
+                ctx.stroke();
               }
             }
           }
@@ -840,6 +1352,11 @@
       }, 1200);
     });
     listaComentarios.prepend(div);
+
+    // Staggered entrance for new comment
+    var totalItems = listaComentarios.querySelectorAll('.comentario-item').length;
+    div.style.setProperty('--i', 0);
+    div.classList.add('slide-in-up');
   }
 
   function eliminarComentario(id) {
@@ -877,6 +1394,26 @@
   // Initialization
   // ======================================================================
   function init() {
+    // Cargar YouTube IFrame API (necesaria para YT.Player)
+    if (!document.getElementById('youtube-iframe-api')) {
+      var ytScript = document.createElement('script');
+      ytScript.id = 'youtube-iframe-api';
+      ytScript.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(ytScript);
+    }
+    window.onYouTubeIframeAPIReady = function () {
+      window._ytApiReady = true;
+      if (window._ytPollTimer) {
+        clearInterval(window._ytPollTimer);
+        window._ytPollTimer = null;
+      }
+      if (window._ytPendingPlayers) {
+        var pending = window._ytPendingPlayers.slice();
+        window._ytPendingPlayers = [];
+        pending.forEach(function (fn) { fn(); });
+      }
+    };
+
     // Init Supabase sync
     SupabaseSync.init();
 
@@ -923,7 +1460,14 @@
         if (result === 'added') {
           urlInput.value = '';
           if (errorEl) errorEl.hidden = true;
-          if (videoList) YouTubeManager.render(videoList);
+          if (videoList) {
+            var entries = YouTubeManager.getAll();
+            YouTubeManager.renderOne(entries[0], videoList, {
+              animate: true,
+              delay: 0.5,
+              prepend: true
+            });
+          }
         } else {
           if (errorEl) {
             errorEl.hidden = false;
@@ -980,7 +1524,14 @@
           var result = YouTubeManager.addCloudinary(data.secure_url, data.public_id, file.name);
           if (result === 'added') {
             if (uploadStatus) uploadStatus.textContent = '✅ Video subido correctamente.';
-            if (videoList) YouTubeManager.render(videoList);
+            if (videoList) {
+              var entries = YouTubeManager.getAll();
+              YouTubeManager.renderOne(entries[0], videoList, {
+                animate: true,
+                delay: 0.5,
+                prepend: true
+              });
+            }
           } else if (result === 'duplicate') {
             if (uploadStatus) uploadStatus.textContent = '⚠️ Ese video ya está en tu lista.';
           } else if (result === 'full') {

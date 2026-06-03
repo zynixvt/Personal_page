@@ -429,6 +429,18 @@
   /* ===== YouTube Form ===== */
   .video-form-card {
     margin-bottom: 16px;
+    /* Estado base invisible: arranca oculto y desplazado hacia abajo.
+       Mismo patrón que .video-card para que la animación de entrada
+       se vea consistente (form → videos). */
+    opacity: 0;
+    translate: 0 24px;
+  }
+
+  /* Animación de aparición del form: misma keyframe que videos,
+     sin delay → arranca apenas se abre el panel. */
+  .video-form-card--enter {
+    animation: video-reveal 0.4s var(--ease-smooth) both;
+    animation-delay: 0s;
   }
 
   .video-form-split {
@@ -585,16 +597,127 @@
     border-color: oklch(55% 0.25 25 / 0.45);
   }
 
+  /* ===== Card Header Row: status izq + badge der ===== */
+  .video-card-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px 0;
+    min-height: 24px;
+  }
+
+  /* ===== Status Indicator (dot + sliding text) ===== */
+  .video-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .video-status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: #ffc107; /* yellow = loading */
+    transition: background 0.35s ease;
+  }
+  .video-status-dot.status-ready { background: #22c55e; }  /* green */
+  .video-status-dot.status-error { background: #ef4444; }  /* red */
+
+  .video-status-text {
+    display: inline-block;
+    white-space: nowrap;
+    translate: -100% 0;
+    opacity: 0;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: #ffc107;
+  }
+  .video-status-text.status-ready { color: #22c55e; }
+  .video-status-text.status-error { color: #ef4444; }
+
+  @keyframes status-slide-in {
+    from { translate: -100% 0; opacity: 0; }
+    to   { translate: 0 0; opacity: 1; }
+  }
+
+  @keyframes status-slide-out {
+    from { translate: 0 0; opacity: 1; }
+    to   { translate: -100% 0; opacity: 0; }
+  }
+
+  @keyframes status-slide-in-right {
+    from { translate: 100% 0; opacity: 0; }
+    to   { translate: 0 0; opacity: 1; }
+  }
+
+  .status-slide-in {
+    animation: status-slide-in 0.4s ease-out both;
+  }
+
+  .status-slide-out {
+    animation: status-slide-out 0.4s ease-in both;
+  }
+
+  .status-slide-in-right {
+    animation: status-slide-in-right 0.4s ease-out both;
+  }
+
     .video-card-wrapper {
     position: relative;
     width: 100%;
+    overflow: hidden;
+    border-radius: 4px;
+    will-change: transform;
+  }
+
+  /* Miniatura: cubre el iframe mientras carga. pointer-events:none para no bloquear clicks */
+  .video-thumb {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    z-index: 1;
+    pointer-events: none;
+    border-radius: 4px;
+    transition: opacity 0.3s ease;
+  }
+
+  /* Target para YT.Player — la API crea el iframe adentro */
+  .video-player-target {
+    width: 100%;
+    aspect-ratio: 16 / 9;
+  }
+
+  /* Nota: ya no usamos un overlay custom de play. El player de YouTube
+     maneja su propia UI (botón de play, controles). La miniatura local
+     cubre el iframe hasta que el video está en estado CUED. */
+
+  .video-card-wrapper iframe,
+  .video-card-wrapper video {
+    width: 100%;
+    aspect-ratio: 16 / 9;
   }
 
   .video-card-wrapper iframe,
   .video-card-wrapper video {
     width: 100%;
     aspect-ratio: 16 / 9;
-    transition: opacity 0.4s ease;
+  }
+
+  /* Virtual scrolling nativo + reserva de espacio */
+  .video-card {
+    content-visibility: auto;
+    contain-intrinsic-size: 400px;
+    /* Estado base invisible: arranca oculto y desplazado hacia abajo.
+       animation-fill-mode: both mantiene este estado durante el delay
+       y el estado final visible después de animar → sin flash al re-abrir. */
+    opacity: 0;
+    translate: 0 24px;
   }
 
   .video-retry {
@@ -644,6 +767,46 @@
     align-self: center;
     font-size: 0.8rem;
     padding: 6px 16px;
+  }
+
+  /* Animación de aparición: fade-in + slide-up (invisible → visible).
+     El estado base en .video-card ya es invisible, así que animation-fill-mode: both
+     mantiene el `from` durante el delay y el `to` después de animar.
+     Sin saltos, sin flash, secuencial por --delay. */
+  @keyframes video-reveal {
+    from { opacity: 0; translate: 0 24px; }
+    to   { opacity: 1; translate: 0 0; }
+  }
+
+  .video-card--enter {
+    animation: video-reveal 0.4s var(--ease-smooth) both;
+    animation-delay: var(--delay, 0s);
+  }
+
+  /* Exit animation: inverso del entrance (slide-down + fade-out).
+     El estado final (opacity:0, translate:0 24px) coincide con el estado
+     inicial del entrance → al re-entrar no hay flash, la animación arranca
+     suave desde donde quedó la card. */
+  @keyframes video-hide {
+    from { opacity: 1; translate: 0 0; }
+    to   { opacity: 0; translate: 0 24px; }
+  }
+
+  .video-card--exit {
+    animation: video-hide 0.4s var(--ease-smooth) both;
+    animation-delay: var(--delay, 0s);
+  }
+
+  /* ===== Staggered Entrance Animation ===== */
+  @keyframes slide-in-up {
+    from { opacity: 0; translate: 0 24px; }
+    to   { opacity: 1; translate: 0 0; }
+  }
+
+  .slide-in-up {
+    animation: slide-in-up 0.4s var(--ease-smooth) both;
+    animation-delay: calc(var(--i, 0) * 80ms);
+    will-change: transform;
   }
 
   /* ===== Music List ===== */
@@ -779,7 +942,6 @@
     padding: 14px 16px;
     margin-bottom: 12px;
     text-align: left;
-    animation: slide-in 0.3s var(--ease-smooth);
   }
 
   .comentario-header {
@@ -837,19 +999,6 @@
     padding-bottom: 0;
     margin-bottom: 0;
     border-width: 0;
-  }
-
-  @keyframes slide-in {
-    from {
-      opacity: 0;
-      translate: 0 -10px;
-      scale: 0.97;
-    }
-    to {
-      opacity: 1;
-      translate: 0 0;
-      scale: 1;
-    }
   }
 
   .comentario-nombre {
@@ -951,8 +1100,6 @@
     scrollbar-width: thin;
     scrollbar-color: var(--accent) transparent;
     -webkit-overflow-scrolling: touch;
-    content-visibility: auto;
-    contain-intrinsic-size: 600px;
   }
 
   .panel-content > .card:first-child {
