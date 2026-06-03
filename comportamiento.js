@@ -859,17 +859,97 @@
       opts = opts || {};
       var card = YouTubeManager._buildCard(entry);
 
-      if (opts.animate !== false) {
-        card.classList.add('video-card--enter');
-        if (opts.delay) {
-          card.style.setProperty('--delay', opts.delay + 's');
-        }
+      // FLIP + 0.3s delay — solo si hay siblings, no es prefersReduced,
+      // y la animación está habilitada. Si alguna falla, caemos al
+      // fast-path existente (entrance inmediato).
+      var canFlip = opts.animate !== false
+                 && !prefersReduced
+                 && container.children.length > 0;
+
+      if (canFlip) {
+        var siblings = Array.from(container.children).filter(function (c) {
+          return !c.classList.contains('video-card--preparing')
+              && !c.classList.contains('video-card--collapse');
+        });
+        // Si por alguna razón todos los hijos existentes están en estado
+        // preparing/collapse (improbable en un solo insert), no FLIP.
+        if (siblings.length === 0) canFlip = false;
       }
 
-      if (opts.prepend) {
-        container.insertBefore(card, container.firstChild);
+      if (!canFlip) {
+        // Fast-path: comportamiento actual (preserva el contrato de opts.animate).
+        if (opts.animate !== false) {
+          card.classList.add('video-card--enter');
+          if (opts.delay) {
+            card.style.setProperty('--delay', opts.delay + 's');
+          }
+        }
+
+        if (opts.prepend) {
+          container.insertBefore(card, container.firstChild);
+        } else {
+          container.appendChild(card);
+        }
       } else {
-        container.appendChild(card);
+        // FASE 1: capturar posiciones pre-insert
+        var firstRects = siblings.map(function (s) {
+          return s.getBoundingClientRect();
+        });
+
+        // FASE 2: insertar la card con placeholder + entrance delayed
+        card.classList.add('video-card--enter', 'video-card--preparing');
+        card.style.setProperty('--delay', '0.3s');
+
+        if (opts.prepend) {
+          container.insertBefore(card, container.firstChild);
+        } else {
+          container.appendChild(card);
+        }
+
+        // Forzar reflow para que la track nueva (width:0) se materialice
+        // antes de medir las nuevas posiciones de los siblings.
+        // eslint-disable-next-line no-unused-expressions
+        card.offsetWidth;
+
+        // FASE 3: capturar posiciones post-insert
+        var lastRects = siblings.map(function (s) {
+          return s.getBoundingClientRect();
+        });
+
+        // FASE 4: invertir con transform sin transition (la posición visual
+        // aparente sigue siendo la original).
+        siblings.forEach(function (s, i) {
+          var dx = firstRects[i].left - lastRects[i].left;
+          s.style.transform = 'translate(' + dx + 'px, 0)';
+        });
+
+        // FASE 5: doble rAF — primero se commitea la posición invertida,
+        // luego en el segundo frame se aplica la transition y se quita el
+        // transform para que el browser interpole a la posición natural.
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            siblings.forEach(function (s) {
+              s.style.transition = 'transform 0.3s var(--ease-smooth)';
+              s.style.transform = '';
+            });
+          });
+        });
+
+        // FASE 6: a los 300ms, quitar el placeholder para que la entrance
+        // (que arrancó con --delay: 0.3s) tome el control visual.
+        setTimeout(function () {
+          card.classList.remove('video-card--preparing');
+        }, 300);
+
+        // FASE 7: cleanup a los 700ms (0.3s move + 0.4s entrance). Safety net
+        // por si transitionend no dispara (p.ej. tab en background).
+        setTimeout(function () {
+          siblings.forEach(function (s) {
+            s.style.transition = '';
+            s.style.transform = '';
+          });
+          card.style.removeProperty('--delay');
+        }, 700);
       }
 
       // RenderOne siempre agrega una card visible — crear player inmediatamente
