@@ -898,7 +898,7 @@
 
         // FASE 2: insertar la card con placeholder + entrance delayed
         card.classList.add('video-card--enter', 'video-card--preparing');
-        card.style.setProperty('--delay', '0.3s');
+        card.style.setProperty('--delay', '0.4s');
 
         if (opts.prepend) {
           container.insertBefore(card, container.firstChild);
@@ -926,22 +926,24 @@
         // FASE 5: doble rAF — primero se commitea la posición invertida,
         // luego en el segundo frame se aplica la transition y se quita el
         // transform para que el browser interpole a la posición natural.
+        // 0.4s matchea la duración del collapse en delete (simetría
+        // visual entre add y delete).
         requestAnimationFrame(function () {
           requestAnimationFrame(function () {
             siblings.forEach(function (s) {
-              s.style.transition = 'transform 0.3s var(--ease-smooth)';
+              s.style.transition = 'transform 0.4s var(--ease-smooth)';
               s.style.transform = '';
             });
           });
         });
 
-        // FASE 6: a los 300ms, quitar el placeholder para que la entrance
-        // (que arrancó con --delay: 0.3s) tome el control visual.
+        // FASE 6: a los 400ms, quitar el placeholder para que la entrance
+        // (que arrancó con --delay: 0.4s) tome el control visual.
         setTimeout(function () {
           card.classList.remove('video-card--preparing');
-        }, 300);
+        }, 400);
 
-        // FASE 7: cleanup a los 700ms (0.3s move + 0.4s entrance). Safety net
+        // FASE 7: cleanup a los 800ms (0.4s move + 0.4s entrance). Safety net
         // por si transitionend no dispara (p.ej. tab en background).
         setTimeout(function () {
           siblings.forEach(function (s) {
@@ -949,7 +951,7 @@
             s.style.transform = '';
           });
           card.style.removeProperty('--delay');
-        }, 700);
+        }, 800);
       }
 
       // RenderOne siempre agrega una card visible — crear player inmediatamente
@@ -1166,6 +1168,18 @@
     // FASE 1: visual — R→L clip-path sweep (transition, no keyframe, no translate).
     // Reemplaza al .video-card--exit + @keyframes video-hide del cambio anterior.
     // Mismo patrón que .comentario-item.eliminando (líneas 1004-1009).
+    //
+    // Pre-condición: la card puede tener .video-card--enter (animation
+    // con fill-mode:both que mantiene opacity:1) y/o .video-card--exit
+    // (animation keyframe video-hide). Ambos GANAN en el cascade a la
+    // transition de --sweep-out, así que hay que limpiarlos y forzar un
+    // reflow + opacity:1 explícito antes de aplicar el sweep. Sin esto
+    // el sweep no se ve (la card simplemente desaparece al colapsar).
+    card.classList.remove('video-card--enter', 'video-card--exit');
+    card.style.opacity = '1';
+    // eslint-disable-next-line no-unused-expressions
+    void card.offsetWidth; // force reflow
+
     card.classList.add('video-card--sweep-out');
 
     var phase1Done = false;
@@ -1173,15 +1187,18 @@
       if (e.propertyName !== 'clip-path') return;   // ignora transitionend de opacity
       card.removeEventListener('transitionend', onSweepEnd);
       phase1Done = true;
-      colapsarYEliminar();
+      // Espera 0.3s antes del collapse: deja que la vista "registre" que
+      // la card se fue antes de que los siblings empiecen a cerrarse.
+      // Sin esta pausa, sweep y collapse se sienten como un solo evento.
+      setTimeout(colapsarYEliminar, 300);
     }
     card.addEventListener('transitionend', onSweepEnd);
 
     // Fallback: si transitionend no dispara (p.ej. tab en background)
-    // 600ms cubre los 0.5s de la transición con 100ms de slack.
+    // 850ms cubre los 0.55s de la transición + 0.3s de espera con slack.
     setTimeout(function () {
       if (!phase1Done) colapsarYEliminar();
-    }, 600);
+    }, 850);
 
     function colapsarYEliminar() {
       if (card._collapsed) return;            // Timer + transitionend llegaron juntos
