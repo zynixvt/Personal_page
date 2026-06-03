@@ -815,13 +815,9 @@
       deleteBtn.className = 'btn btn-outline video-delete';
       deleteBtn.textContent = 'Eliminar';
       deleteBtn.addEventListener('click', function () {
-        // Destruir player primero si existe
-        var p = YouTubeManager._players[entry.id];
-        if (p) { try { p.destroy(); } catch (_) {} delete YouTubeManager._players[entry.id]; }
-        YouTubeManager.remove(entry.id);
-        // Buscar el contenedor en el DOM (más seguro que variable global)
-        var listContainer = document.getElementById('video-list') || containerRef;
-        if (listContainer) YouTubeManager.render(listContainer);
+        if (card._deleting) return; // Ya en curso: no-op
+        // Delega en removeOne (YT teardown + storage + animación bifásica).
+        removeOne(card, entry.id, YouTubeManager._observer);
       });
       card.appendChild(deleteBtn);
 
@@ -915,6 +911,7 @@
       YouTubeManager._observer = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           var card = entry.target;
+          if (card._deleting) return; // No re-clasificar una card en eliminación
           // Índice de la card en la lista → se usa para stagger tanto en
           // entrance como en exit (mismo delay = simetría visual)
           var allCards = document.querySelectorAll('#video-list .video-card');
@@ -1055,6 +1052,114 @@
     }
   };
   var containerRef = null;
+
+  // ======================================================================
+  // removeOne — eliminación per-card con salida animada en dos fases
+  // (visual + colapso de slot). Reemplaza al YouTubeManager.render() que
+  // reconstruía todos los iframes. Patrón basado en comentario-item
+  // (líneas 1297-1360) adaptado a flex-wrap.
+  // ======================================================================
+  function removeOne(card, id, observer) {
+    if (card._deleting) return;     // Idempotencia: doble click, eventos en cola
+    card._deleting = true;
+
+    // Destruir player primero si existe (sin esto, un iframe congelado
+    // queda visible mientras la card se contrae).
+    var p = YouTubeManager._players[id];
+    if (p) { try { p.destroy(); } catch (_) {} delete YouTubeManager._players[id]; }
+    YouTubeManager.remove(id);
+
+    // Detach del observer: el IntersectionObserver de setupScrollOptimizer
+    // no debe re-clasificar la card mientras se elimina.
+    if (observer && typeof observer.unobserve === 'function') {
+      observer.unobserve(card);
+    }
+
+    // Si el usuario pidió menos movimiento, saltamos ambas fases y
+    // removemos al toque.
+    if (prefersReduced) {
+      if (card.parentNode) card.parentNode.removeChild(card);
+      updateVideoAggregateUI();
+      return;
+    }
+
+    // FASE 1: visual — reusa .video-card--exit (keyframes video-hide, 0.4s)
+    card.classList.add('video-card--exit');
+
+    var phase1Done = false;
+    function onExitEnd(e) {
+      if (e.target !== card) return;          // ignora animationend de hijos
+      card.removeEventListener('animationend', onExitEnd);
+      phase1Done = true;
+      colapsarYEliminar();
+    }
+    card.addEventListener('animationend', onExitEnd);
+
+    // Fallback: si animationend no dispara (p.ej. tab en background)
+    setTimeout(function () {
+      if (!phase1Done) colapsarYEliminar();
+    }, 600);
+
+    function colapsarYEliminar() {
+      if (card._collapsed) return;            // Timer + transitionend llegaron juntos
+      card._collapsed = true;
+
+      // FASE 2: layout — .video-card--collapse lleva flex-basis etc. a 0
+      card.classList.add('video-card--collapse');
+
+      function onCollapseEnd(e) {
+        if (e.propertyName !== 'flex-basis') return;  // ignora los otros 3 props
+        card.removeEventListener('transitionend', onCollapseEnd);
+        if (card.parentNode) card.parentNode.removeChild(card);
+        updateVideoAggregateUI();
+      }
+      card.addEventListener('transitionend', onCollapseEnd);
+
+      // Fallback: si transitionend no dispara, removemos igual.
+      setTimeout(function () {
+        if (card.parentNode) card.parentNode.removeChild(card);
+        updateVideoAggregateUI();
+      }, 400);
+    }
+  }
+
+  // ======================================================================
+  // updateVideoAggregateUI — refresca el contador y el empty-state que
+  // antes se actualizaban implícitamente vía YouTubeManager.render().
+  // Idempotente: seguro llamarlo dos veces.
+  // ======================================================================
+  function updateVideoAggregateUI() {
+    var listContainer = document.getElementById('video-list') || containerRef;
+    if (!listContainer) return;
+    var count = YouTubeManager.getCount();
+
+    // Aviso de capacidad
+    var existingWarn = listContainer.querySelector('.video-capacity-warn');
+    if (count >= WARN_AT_VIDEOS) {
+      if (!existingWarn) {
+        var warn = document.createElement('p');
+        warn.className = 'video-capacity-warn';
+        warn.textContent = '⚠️ Tenés ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
+        listContainer.insertBefore(warn, listContainer.firstChild);
+      } else {
+        existingWarn.textContent = '⚠️ Tenés ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
+      }
+    } else if (existingWarn && existingWarn.parentNode) {
+      existingWarn.parentNode.removeChild(existingWarn);
+    }
+
+    // Empty state
+    var existingEmpty = listContainer.querySelector('.video-empty');
+    if (count === 0 && !existingEmpty) {
+      var empty = document.createElement('p');
+      empty.className = 'video-empty';
+      empty.style.cssText = 'text-align:center;color:var(--text-secondary);padding:20px;';
+      empty.textContent = 'No hay videos aún. Agrega uno arriba.';
+      listContainer.appendChild(empty);
+    } else if (count > 0 && existingEmpty && existingEmpty.parentNode) {
+      existingEmpty.parentNode.removeChild(existingEmpty);
+    }
+  }
 
   // ======================================================================
   // Particle System with spatial grid optimization + pause/resume
