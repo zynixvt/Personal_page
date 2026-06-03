@@ -896,9 +896,14 @@
           return s.getBoundingClientRect();
         });
 
-        // FASE 2: insertar la card con placeholder + entrance delayed
-        card.classList.add('video-card--enter', 'video-card--preparing');
-        card.style.setProperty('--delay', '0.4s');
+        // FASE 2: insertar la card con placeholder (clip-path recortado
+        // al 100% desde la derecha → invisible pero ocupando 280px en el
+        // flex para que los siblings se muevan). NO agregamos --enter acá:
+        // la entrance la manejamos con transition manual en FASE 6 para
+        // evitar conflictos entre animation-fill-mode:both, animation-delay
+        // y la transition: opacity 0s del base de .video-card.
+        card.classList.add('video-card--preparing');
+        card.style.transition = 'none';
 
         if (opts.prepend) {
           container.insertBefore(card, container.firstChild);
@@ -906,8 +911,8 @@
           container.appendChild(card);
         }
 
-        // Forzar reflow para que la track nueva (width:0) se materialice
-        // antes de medir las nuevas posiciones de los siblings.
+        // Forzar reflow para que la track nueva (clip-path recortado) se
+        // materialice antes de medir las nuevas posiciones de los siblings.
         // eslint-disable-next-line no-unused-expressions
         card.offsetWidth;
 
@@ -937,10 +942,22 @@
           });
         });
 
-        // FASE 6: a los 400ms, quitar el placeholder para que la entrance
-        // (que arrancó con --delay: 0.4s) tome el control visual.
+        // FASE 6: a los 400ms, quitar el placeholder y disparar la
+        // entrance con transition manual. Secuencia:
+        //   1. Quitar --preparing (clip-path salta al base, instantáneo
+        //      gracias al transition:clip-path 0s del base).
+        //   2. Force reflow para que el cambio de clip-path se commitee.
+        //   3. Setear transition de opacity+translate.
+        //   4. Cambiar opacity:0→1 y translate:0 24px→0 0 → interpola 0.4s.
+        // Transition manual en lugar de animation --enter para evitar el
+        // conflicto con la transition: opacity 0s del base de .video-card.
         setTimeout(function () {
           card.classList.remove('video-card--preparing');
+          // eslint-disable-next-line no-unused-expressions
+          void card.offsetWidth; // commit del cambio de clip-path
+          card.style.transition = 'opacity 0.4s var(--ease-smooth), translate 0.4s var(--ease-smooth)';
+          card.style.opacity = '1';
+          card.style.translate = '0 0';
         }, 400);
 
         // FASE 7: cleanup a los 800ms (0.4s move + 0.4s entrance). Safety net
@@ -950,7 +967,9 @@
             s.style.transition = '';
             s.style.transform = '';
           });
-          card.style.removeProperty('--delay');
+          card.style.removeProperty('transition');
+          card.style.removeProperty('opacity');
+          card.style.removeProperty('translate');
         }, 800);
       }
 

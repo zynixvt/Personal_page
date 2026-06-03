@@ -571,16 +571,8 @@
        --sweep-out animan a inset(0 100% 0 0) y el browser no puede
        interpolar entre 'none' y un inset(). Mismo truco que
        .comentario-item (línea 1024). inset(0 0 0 0) es el rectángulo
-       completo → visualmente idéntico a no tener clip-path.
-
-       transition: clip-path 0s + opacity 0s neutraliza la interpolación
-       IMPLÍCITA que algunos browsers aplican entre dos inset() del
-       mismo tipo cuando hay una animation activa (--enter). Sin esto,
-       al quitar --preparing el browser "destapaba" la card con un
-       barrido L→R de ~400ms no pedido. --sweep-out overridea con su
-       propio transition 0.55s cuando sí queremos el barrido R→L. */
+       completo → visualmente idéntico a no tener clip-path. */
     clip-path: inset(0 0 0 0);
-    transition: clip-path 0s, opacity 0s;
   }
 
   .video-badge {
