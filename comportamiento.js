@@ -1083,19 +1083,22 @@
       return;
     }
 
-    // FASE 1: visual — reusa .video-card--exit (keyframes video-hide, 0.4s)
-    card.classList.add('video-card--exit');
+    // FASE 1: visual — R→L clip-path sweep (transition, no keyframe, no translate).
+    // Reemplaza al .video-card--exit + @keyframes video-hide del cambio anterior.
+    // Mismo patrón que .comentario-item.eliminando (líneas 1004-1009).
+    card.classList.add('video-card--sweep-out');
 
     var phase1Done = false;
-    function onExitEnd(e) {
-      if (e.target !== card) return;          // ignora animationend de hijos
-      card.removeEventListener('animationend', onExitEnd);
+    function onSweepEnd(e) {
+      if (e.propertyName !== 'clip-path') return;   // ignora transitionend de opacity
+      card.removeEventListener('transitionend', onSweepEnd);
       phase1Done = true;
       colapsarYEliminar();
     }
-    card.addEventListener('animationend', onExitEnd);
+    card.addEventListener('transitionend', onSweepEnd);
 
-    // Fallback: si animationend no dispara (p.ej. tab en background)
+    // Fallback: si transitionend no dispara (p.ej. tab en background)
+    // 600ms cubre los 0.5s de la transición con 100ms de slack.
     setTimeout(function () {
       if (!phase1Done) colapsarYEliminar();
     }, 600);

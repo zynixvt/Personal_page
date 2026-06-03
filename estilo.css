@@ -797,6 +797,31 @@
     animation-delay: var(--delay, 0s);
   }
 
+  /* Sweep-out: right-to-left clip-path + opacity, driven by transition.
+     Mismo patrón que .comentario-item.eliminando (líneas 1004-1009) pero
+     tuneado para video cards. Sin translate, sin @keyframes — solo
+     clip-path y opacity. Duración 0.5s (vs 0.65s de comentarios) porque
+     la fase 2 (collapse) suma 0.3s y el total debe quedar < 0.9s. */
+  .video-card--sweep-out {
+    clip-path: inset(0 100% 0 0);
+    opacity: 0;
+    pointer-events: none;
+    overflow: hidden;
+    transition: clip-path 0.5s cubic-bezier(0.65, 0, 0.35, 1),
+                opacity    0.5s cubic-bezier(0.65, 0, 0.35, 1);
+  }
+
+  /* Placeholder track usado por el FLIP de renderOne: ocupa un slot de
+     width:0 en la fila flex para que los siblings refloween al toque,
+     pero la card en sí queda invisible. Se quita a t=0.3s (matching el
+     --delay de la entrance) para que el keyframe video-reveal tome el
+     control. */
+  .video-card--preparing {
+    width: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
   /* Collapse animation: shrinks the deleted card's slot to 0 so flex-wrap
      siblings reflow into the gap. We animate flex-basis, max-width, min-width,
      and margin together. We CANNOT collapse max-height here (the comment-card
@@ -1150,6 +1175,10 @@
     }
 
     .video-card--collapse {
+      transition: none;
+    }
+
+    .video-card--sweep-out {
       transition: none;
     }
   }
