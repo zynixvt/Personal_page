@@ -567,6 +567,12 @@
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     position: relative;
+    /* clip-path base EXPLÍCITO (no 'none'): los modifiers --preparing y
+       --sweep-out animan a inset(0 100% 0 0) y el browser no puede
+       interpolar entre 'none' y un inset(). Mismo truco que
+       .comentario-item (línea 1024). inset(0 0 0 0) es el rectángulo
+       completo → visualmente idéntico a no tener clip-path. */
+    clip-path: inset(0 0 0 0);
   }
 
   .video-badge {
@@ -815,13 +821,15 @@
                 opacity    0.55s cubic-bezier(0.65, 0, 0.35, 1);
   }
 
-  /* Placeholder track usado por el FLIP de renderOne: ocupa un slot de
-     width:0 en la fila flex para que los siblings refloween al toque,
-     pero la card en sí queda invisible. Se quita a t=0.4s (matching el
-     --delay de la entrance) para que el keyframe video-reveal tome el
-     control. */
+  /* Placeholder usado por el FLIP de renderOne: la card ocupa su width
+     natural (280px) en el flex container, pero está visualmente oculta
+     con clip-path: inset(0 100% 0 0) (recortada al 100% desde la
+     derecha). Esto fuerza a los siblings a moverse para hacerle lugar
+     en el row → ese movimiento es el FLIP que se anima. Se quita a
+     t=0.4s (matching el --delay de la entrance) para que el keyframe
+     video-reveal tome el control: opacity 0→1 + slide-up. */
   .video-card--preparing {
-    width: 0;
+    clip-path: inset(0 100% 0 0);
     opacity: 0;
     pointer-events: none;
   }
