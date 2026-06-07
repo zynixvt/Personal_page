@@ -661,7 +661,27 @@
       wrapper.className = 'video-card-wrapper';
 
       if (entry.source === 'cloudinary') {
-        // Cloudinary: render como <video>
+        // Cover: thumbnail + botón play estilo YouTube
+        var cover = document.createElement('div');
+        cover.className = 'video-local-cover';
+
+        // Thumbnail desde Cloudinary (frame del video, como hqdefault.jpg)
+        var thumbC = document.createElement('img');
+        thumbC.className = 'video-local-thumb';
+        thumbC.src = 'https://res.cloudinary.com/' + CLOUDINARY_CLOUD_NAME + '/video/upload/' + entry.id + '.jpg';
+        thumbC.alt = '';
+        thumbC.setAttribute('loading', 'lazy');
+        cover.appendChild(thumbC);
+
+        // Botón play estilo YouTube: centro negro, resto amarillo
+        var playBtn = document.createElement('div');
+        playBtn.className = 'video-local-playbtn';
+        playBtn.setAttribute('aria-label', 'Reproducir video');
+        playBtn.innerHTML = '<svg class="playbtn-svg" viewBox="0 0 68 48" width="68" height="48"><path class="playbtn-shape" d="M66.52 7.74c-.78-2.93-2.49-5.41-5.42-6.19C55.79.13 34 0 34 0S12.21.13 6.9 1.55c-2.93.78-4.63 3.26-5.42 6.19C.13 12.21 0 24 0 24s.13 11.79 1.55 16.26c.78 2.93 2.49 5.41 5.42 6.19C12.21 47.87 34 48 34 48s21.79-.13 27.1-1.55c2.93-.78 4.64-3.26 5.42-6.19C67.87 35.79 68 24 68 24s-.13-11.79-1.55-16.26z"/><path class="playbtn-triangle" d="M45 24 27 14v20z"/></svg>';
+        cover.appendChild(playBtn);
+        wrapper.appendChild(cover);
+
+        // Video nativo (debajo del cover)
         var videoEl = document.createElement('video');
         videoEl.src = entry.url;
         videoEl.controls = true;
@@ -670,8 +690,41 @@
         videoEl.title = entry.title || 'Video subido';
         wrapper.appendChild(videoEl);
 
-        // Al reproducir un video subido, pausar los YT players y otros Cloudinary
+        // Estado interno
+        var cloudinaryReady = false;
+        var cloudinaryFailed = false;
+        var cloudinaryTimer = setTimeout(function () {
+          if (!cloudinaryReady) {
+            cloudinaryFailed = true;
+            setStatus('error');
+          }
+        }, 20000);
+
+        // canplay → status ready
+        videoEl.addEventListener('canplay', function () {
+          if (cloudinaryReady || cloudinaryFailed) return;
+          cloudinaryReady = true;
+          clearTimeout(cloudinaryTimer);
+          setStatus('ready');
+        });
+
+        // error → status error
+        videoEl.addEventListener('error', function () {
+          if (cloudinaryReady) return;
+          cloudinaryFailed = true;
+          clearTimeout(cloudinaryTimer);
+          setStatus('error');
+        });
+
+        // Click en cover → reproducir
+        cover.addEventListener('click', function () {
+          if (cloudinaryFailed) return;
+          videoEl.play().catch(function () {});
+        });
+
+        // Al reproducir: ocultar cover + pausar otros videos
         videoEl.addEventListener('play', function () {
+          cover.classList.add('video-local-cover--hidden');
           YouTubeManager._pauseOthers(null, videoEl);
         });
       } else {
