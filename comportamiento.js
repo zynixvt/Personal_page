@@ -543,6 +543,25 @@
     _players: {},
     _playerIdCounter: 0,
     _pendingHandlers: new Map(),
+    _initialRender: false,
+
+    _updateCapacityWarning: function (container) {
+      if (!container || !container.querySelector) return;
+      var existingWarn = container.querySelector('.video-capacity-warn');
+      if (YouTubeManager.isNearCapacity()) {
+        var count = YouTubeManager.getCount();
+        if (!existingWarn) {
+          var warn = document.createElement('p');
+          warn.className = 'video-capacity-warn';
+          warn.textContent = '\u26A0\uFE0F Ten\u00E9s ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
+          container.insertBefore(warn, container.firstChild);
+        } else {
+          existingWarn.textContent = '\u26A0\uFE0F Ten\u00E9s ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
+        }
+      } else if (existingWarn && existingWarn.parentNode) {
+        existingWarn.parentNode.removeChild(existingWarn);
+      }
+    },
 
     _createPlayer: function (id, targetDiv, handlers) {
       // Destruir player existente para este id
@@ -637,6 +656,7 @@
     _buildCard: function (entry) {
       var card = document.createElement('div');
       card.className = 'card video-card';
+      card.dataset.videoId = entry.id;
 
       // Badge de origen + status indicator en un header row
       var badge;
@@ -899,12 +919,22 @@
     },
 
     render: function (container) {
+      if (YouTubeManager._initialRender) {
+        if (console && console.warn) console.warn('[YouTubeManager] render() called more than once — skipping');
+        return;
+      }
+      YouTubeManager._initialRender = true;
       YouTubeManager._destroyPlayers();
       YouTubeManager._pendingHandlers.clear();
       if (YouTubeManager._observer) {
         YouTubeManager._observer.disconnect();
         YouTubeManager._observer = null;
       }
+      containerRef = container;
+      var videos = YouTubeManager.getAll();
+      container.innerHTML = '';
+
+      YouTubeManager._updateCapacityWarning(container);
       containerRef = container;
       var videos = YouTubeManager.getAll();
       container.innerHTML = '';
@@ -1067,6 +1097,129 @@
 
       YouTubeManager.setupScrollOptimizer();
       return card;
+    },
+
+    addCard: function (entry, container, opts) {
+      containerRef = container;
+      opts = opts || {};
+      var card = YouTubeManager._buildCard(entry);
+
+      // FLIP + 0.3s delay — solo si hay siblings, no es prefersReduced,
+      // y la animaci\u00F3n est\u00E1 habilitada. Si alguna falla, caemos al
+      // fast-path existente (entrance inmediato).
+      var canFlip = opts.animate !== false
+                 && !prefersReduced
+                 && container.children.length > 0;
+
+      if (canFlip) {
+        var siblings = Array.from(container.children).filter(function (c) {
+          return !c.classList.contains('video-card--preparing')
+              && !c.classList.contains('video-card--collapse');
+        });
+        // Si por alguna raz\u00F3n todos los hijos existentes est\u00E1n en estado
+        // preparing/collapse (improbable en un solo insert), no FLIP.
+        if (siblings.length === 0) canFlip = false;
+      }
+
+      if (!canFlip) {
+        // Fast-path: comportamiento actual (preserva el contrato de opts.animate).
+        if (opts.animate !== false) {
+          card.classList.add('video-card--enter');
+          if (opts.delay) {
+            card.style.setProperty('--delay', opts.delay + 's');
+          }
+        }
+
+        if (opts.prepend) {
+          container.insertBefore(card, container.firstChild);
+        } else {
+          container.appendChild(card);
+        }
+      } else {
+        // FASE 1: capturar posiciones pre-insert
+        var firstRects = siblings.map(function (s) {
+          return s.getBoundingClientRect();
+        });
+
+        // FASE 2: insertar la card con placeholder
+        card.classList.add('video-card--preparing');
+        card.style.transition = 'none';
+
+        if (opts.prepend) {
+          container.insertBefore(card, container.firstChild);
+        } else {
+          container.appendChild(card);
+        }
+
+        // Forzar reflow
+        // eslint-disable-next-line no-unused-expressions
+        card.offsetWidth;
+
+        // FASE 3: capturar posiciones post-insert
+        var lastRects = siblings.map(function (s) {
+          return s.getBoundingClientRect();
+        });
+
+        // FASE 4: invertir con transform
+        siblings.forEach(function (s, i) {
+          var dx = firstRects[i].left - lastRects[i].left;
+          s.style.transform = 'translate(' + dx + 'px, 0)';
+        });
+
+        // FASE 5: doble rAF para commitar y animar
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            siblings.forEach(function (s) {
+              s.style.transition = 'transform 0.4s var(--ease-smooth)';
+              s.style.transform = '';
+            });
+          });
+        });
+
+        // FASE 6: a los 400ms, quitar placeholder y entrance
+        setTimeout(function () {
+          card.classList.remove('video-card--preparing');
+          // eslint-disable-next-line no-unused-expressions
+          void card.offsetWidth;
+          card.style.transition = 'opacity 0.4s var(--ease-smooth), translate 0.4s var(--ease-smooth)';
+          card.style.opacity = '1';
+          card.style.translate = '0 0';
+        }, 400);
+
+        // FASE 7: cleanup a los 800ms
+        setTimeout(function () {
+          siblings.forEach(function (s) {
+            s.style.transition = '';
+            s.style.transform = '';
+          });
+          card.style.removeProperty('transition');
+          card.style.removeProperty('opacity');
+          card.style.removeProperty('translate');
+        }, 800);
+      }
+
+      // No crear player — el IntersectionObserver o el caller lo maneja
+      // No tocar _pendingHandlers
+      // No llamar setupScrollOptimizer (no desconectar/reconectar observer)
+
+      YouTubeManager._updateCapacityWarning(container);
+      return card;
+    },
+
+    removeCard: function (videoId) {
+      var container = containerRef || document.getElementById('video-list');
+      if (!container) return;
+
+      var card = container.querySelector('[data-video-id="' + videoId + '"]');
+      if (!card) return;
+
+      // Usar removeOne para la animaci\u00F3n b\u00EDf\u00E1sica (clip-path sweep + collapse)
+      // removeOne internamente destruye SOLO ese player, llama remove(id)
+      // y desvincula del observer.
+      removeOne(card, videoId, YouTubeManager._observer);
+
+      // Actualizar warning de capacidad despu\u00E9s de la eliminaci\u00F3n
+      YouTubeManager._updateCapacityWarning(container);
     },
 
     setupScrollOptimizer: function () {
@@ -1325,21 +1478,8 @@
     var listContainer = document.getElementById('video-list') || containerRef;
     if (!listContainer) return;
     var count = YouTubeManager.getCount();
-
-    // Aviso de capacidad
-    var existingWarn = listContainer.querySelector('.video-capacity-warn');
-    if (count >= WARN_AT_VIDEOS) {
-      if (!existingWarn) {
-        var warn = document.createElement('p');
-        warn.className = 'video-capacity-warn';
-        warn.textContent = '⚠️ Tenés ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
-        listContainer.insertBefore(warn, listContainer.firstChild);
-      } else {
-        existingWarn.textContent = '⚠️ Tenés ' + count + ' de ' + MAX_VIDEOS + ' videos guardados.';
-      }
-    } else if (existingWarn && existingWarn.parentNode) {
-      existingWarn.parentNode.removeChild(existingWarn);
-    }
+    // Aviso de capacidad — delegado a _updateCapacityWarning
+    YouTubeManager._updateCapacityWarning(listContainer);
 
     // Empty state
     var existingEmpty = listContainer.querySelector('.video-empty');
@@ -1737,6 +1877,7 @@
           // Mezclar: remote gana en conflictos, locales que no estén remotos se agregan
           var merged = mergeVideoLists(remoteVideos, localVideos);
           localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(merged));
+          YouTubeManager._initialRender = false;
           YouTubeManager.render(videoList);
         }
       }).catch(function () {
@@ -1760,7 +1901,7 @@
           if (errorEl) errorEl.hidden = true;
           if (videoList) {
             var entries = YouTubeManager.getAll();
-            YouTubeManager.renderOne(entries[0], videoList, {
+            YouTubeManager.addCard(entries[0], videoList, {
               animate: true,
               delay: 0.5,
               prepend: true
@@ -1824,7 +1965,7 @@
             if (uploadStatus) uploadStatus.textContent = '✅ Video subido correctamente.';
             if (videoList) {
               var entries = YouTubeManager.getAll();
-              YouTubeManager.renderOne(entries[0], videoList, {
+              YouTubeManager.addCard(entries[0], videoList, {
                 animate: true,
                 delay: 0.5,
                 prepend: true
@@ -1900,6 +2041,23 @@
       },
       addPlayer: function (id, mockPlayer) {
         YouTubeManager._players[id] = mockPlayer;
+      },
+      // Render-optimized helpers
+      YouTubeManager: YouTubeManager,
+      addCard: function (entry, container, opts) {
+        return YouTubeManager.addCard(entry, container, opts);
+      },
+      removeCard: function (videoId) {
+        return YouTubeManager.removeCard(videoId);
+      },
+      render: function (container) {
+        return YouTubeManager.render(container);
+      },
+      updateCapacityWarning: function (container) {
+        return YouTubeManager._updateCapacityWarning(container);
+      },
+      resetInitialRender: function () {
+        YouTubeManager._initialRender = false;
       }
     };
   }

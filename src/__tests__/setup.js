@@ -18,6 +18,11 @@ function makeEl(tag) {
   var cls = [];
   var dataset = {};
   var ch = [];
+  var style = {
+    setProperty: function (prop, value) { this[prop] = value; },
+    getPropertyValue: function (prop) { var v = this[prop]; return v !== undefined ? v : ''; },
+    removeProperty: function (prop) { var v = this[prop]; delete this[prop]; return v !== undefined ? v : ''; }
+  };
   var el = {
     tagName: (tag || 'div').toUpperCase(),
     nodeType: 1,
@@ -49,15 +54,50 @@ function makeEl(tag) {
       toString: function () { return cls.join(' '); },
     },
     dataset: dataset,
-    style: {},
+    style: style,
     textContent: '',
     innerHTML: '',
     appendChild: function (c) { ch.push(c); c._parentEl = el; if (typeof c.parentNode === 'undefined') { Object.defineProperty(c, 'parentNode', { get: function() { return c._parentEl || null; } }); } return c; },
     removeChild: function (c) { var i = ch.indexOf(c); if (i !== -1) { ch.splice(i, 1); c._parentEl = null; } return c; },
-    insertBefore: function (child, ref) { ch.push(child); child._parentEl = el; return child; },
+    insertBefore: function (child, ref) {
+      if (ref) {
+        var idx = ch.indexOf(ref);
+        if (idx !== -1) { ch.splice(idx, 0, child); } else { ch.push(child); }
+      } else {
+        ch.push(child);
+      }
+      child._parentEl = el;
+      return child;
+    },
     replaceChild: function (n, o) { var i = ch.indexOf(o); if (i !== -1) { ch[i] = n; n._parentEl = el; } return o; },
+    _queryAttr: function (sel) {
+      // Support [attr="value"] selectors
+      var m = sel.match(/^\[([\w-]+)(?:="([^"]*)")?\]$/);
+      if (!m) return undefined;
+      var attr = m[1];
+      var val = m[2];
+      // Handle data-* → camelCase conversion
+      var camel = attr.replace(/^data-/, '').replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+      var actual = el.dataset[camel] !== undefined ? el.dataset[camel] : el.dataset[attr];
+      if (val !== undefined) {
+        return String(actual) === val ? el : null;
+      }
+      return actual !== undefined ? el : null;
+    },
     querySelector: function (sel) {
       if (!sel) return null;
+      // Support [attr="value"] selectors
+      if (sel[0] === '[') {
+        var hit = el._queryAttr(sel);
+        if (hit) return hit;
+        for (var i = 0; i < ch.length; i++) {
+          if (ch[i].querySelector) {
+            var found = ch[i].querySelector(sel);
+            if (found) return found;
+          }
+        }
+        return null;
+      }
       // Support .className selectors
       if (sel[0] === '.') {
         var name = sel.slice(1);
@@ -84,7 +124,10 @@ function makeEl(tag) {
     querySelectorAll: function (sel) {
       var results = [];
       if (!sel) return results;
-      if (sel[0] === '.') {
+      if (sel[0] === '[') {
+        var hit = el._queryAttr(sel);
+        if (hit) results.push(hit);
+      } else if (sel[0] === '.') {
         var name = sel.slice(1);
         if (el.classList.contains(name)) results.push(el);
       } else {
@@ -101,8 +144,13 @@ function makeEl(tag) {
     addEventListener: function () {},
     removeEventListener: function () {},
     getAttribute: function (k) {
-      // Check dataset first, then direct properties
-      if (el.dataset[k] !== undefined) return el.dataset[k];
+      // Handle data-* → camelCase for dataset lookups
+      if (k.indexOf('data-') === 0) {
+        var camel = k.replace(/^data-/, '').replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+        if (el.dataset[camel] !== undefined) return String(el.dataset[camel]);
+      }
+      // Check dataset first
+      if (el.dataset[k] !== undefined) return String(el.dataset[k]);
       // Properties set directly on the element (e.g. el.src, el.href)
       var direct = el[k];
       if (direct !== undefined && direct !== null && typeof direct !== 'function' && typeof direct !== 'object') return String(direct);
