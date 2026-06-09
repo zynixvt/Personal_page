@@ -340,6 +340,82 @@
   }
 
   // ======================================================================
+  // StatusMachine — status indicator with loading/ready/error/hide transitions
+  // Extracted from _buildCard closure so it can be unit-tested.
+  // Accepts the .video-status container element; finds .video-status-dot
+  // and .video-status-text children via querySelector.
+  // ======================================================================
+
+  function StatusMachine(element) {
+    var dot = element.querySelector('.video-status-dot');
+    var text = element.querySelector('.video-status-text');
+    var _state = 'loading';
+    var _statusTimeoutId;
+
+    // Apply initial loading state synchronously (no animation)
+    dot.className = 'video-status-dot status-loading';
+    text.className = 'video-status-text status-loading';
+    text.textContent = 'Cargando...';
+
+    function setState(state, fast) {
+      clearTimeout(_statusTimeoutId);
+      var prevState = _state || 'loading';
+      _state = state;
+      var delay = fast ? 150 : 400;
+
+      if (state === 'hide') {
+        text.className = 'video-status-text status-slide-out';
+        if (prevState === 'ready') text.classList.add('status-ready');
+        else if (prevState === 'error') text.classList.add('status-error');
+        return;
+      }
+
+      // Slide out current text WITH its color preserved
+      text.className = 'video-status-text status-slide-out';
+      if (prevState === 'ready') text.classList.add('status-ready');
+      else if (prevState === 'error') text.classList.add('status-error');
+
+      _statusTimeoutId = setTimeout(function () {
+        dot.className = 'video-status-dot';
+        text.className = 'video-status-text';
+        if (state === 'ready') {
+          dot.classList.add('status-ready');
+          text.classList.add('status-ready');
+          text.textContent = 'Listo';
+          text.classList.add('status-slide-in');
+
+          // Auto-hide "Listo" after 2s — KEEP green while sliding out
+          _statusTimeoutId = setTimeout(function () {
+            text.className = 'video-status-text status-slide-out';
+            text.classList.add('status-ready');
+          }, 2000);
+        } else if (state === 'error') {
+          dot.classList.add('status-error');
+          text.classList.add('status-error');
+          text.textContent = 'Error de carga';
+          text.classList.add('status-slide-in');
+        } else {
+          // loading
+          dot.classList.add('status-loading');
+          text.classList.add('status-loading');
+          text.textContent = 'Cargando...';
+          text.classList.add('status-slide-in');
+        }
+      }, delay);
+    }
+
+    function _triggerStatus() {
+      setState(_state || 'loading', true);
+    }
+
+    return {
+      setState: setState,
+      _triggerStatus: _triggerStatus,
+      el: element
+    };
+  }
+
+  // ======================================================================
   // VideoManager — YouTube + Cloudinary, localStorage CRUD, Supabase sync
   // ======================================================================
 
@@ -583,71 +659,16 @@
       var statusText = document.createElement('span');
       statusText.className = 'video-status-text';
       statusText.textContent = 'Cargando...';
-      card._state = 'loading';
 
       var statusEl = document.createElement('span');
       statusEl.className = 'video-status';
       statusEl.appendChild(statusDot);
       statusEl.appendChild(statusText);
-      // El texto se desliza al animar la card (no acá)
 
-      // Helper para cambiar estado del status con slide-out → slide-in
-      var _statusTimeoutId;
-      function setStatus(state, fast) {
-        clearTimeout(_statusTimeoutId);
-        // Save previous state for slide-out color preservation
-        var prevState = card._state || 'loading';
-        card._state = state;
-        var delay = fast ? 150 : 400;
-
-        if (state === 'hide') {
-          statusText.className = 'video-status-text status-slide-out';
-          // Preserve color while sliding out
-          if (prevState === 'ready') statusText.classList.add('status-ready');
-          else if (prevState === 'error') statusText.classList.add('status-error');
-          return;
-        }
-
-        // Slide out current text WITH its color preserved
-        statusText.className = 'video-status-text status-slide-out';
-        if (prevState === 'ready') statusText.classList.add('status-ready');
-        else if (prevState === 'error') statusText.classList.add('status-error');
-
-        _statusTimeoutId = setTimeout(function () {
-          // Resetear clases y poner nuevo estado
-          statusDot.className = 'video-status-dot';
-          statusText.className = 'video-status-text';
-          if (state === 'ready') {
-            statusDot.classList.add('status-ready');
-            statusText.classList.add('status-ready');
-            statusText.textContent = 'Listo';
-            statusText.classList.add('status-slide-in');
-
-            // Auto-hide "Listo" after 2s — KEEP green while sliding out
-            _statusTimeoutId = setTimeout(function () {
-              statusText.className = 'video-status-text status-slide-out';
-              statusText.classList.add('status-ready');
-            }, 2000);
-          } else if (state === 'error') {
-            statusDot.classList.add('status-error');
-            statusText.classList.add('status-error');
-            statusText.textContent = 'Error de carga';
-            statusText.classList.add('status-slide-in');
-            // Stays visible until retry
-          } else {
-            // loading
-            statusDot.classList.add('status-loading');
-            statusText.classList.add('status-loading');
-            statusText.textContent = 'Cargando...';
-            statusText.classList.add('status-slide-in');
-          }
-        }, delay);
-      }
+      var statusMachine = StatusMachine(statusEl);
 
       // Re-trigger status animation based on current state (for scroll re-entry)
-      card._triggerStatus = function () {
-        setStatus(card._state || 'loading', true);
-      };
+      card._triggerStatus = statusMachine._triggerStatus;
 
       // Header row: status izq | badge der
       var headerRow = document.createElement('div');
@@ -696,7 +717,7 @@
         var cloudinaryTimer = setTimeout(function () {
           if (!cloudinaryReady) {
             cloudinaryFailed = true;
-            setStatus('error');
+            statusMachine.setState('error');
           }
         }, 20000);
 
@@ -705,7 +726,7 @@
           if (cloudinaryReady || cloudinaryFailed) return;
           cloudinaryReady = true;
           clearTimeout(cloudinaryTimer);
-          setStatus('ready');
+          statusMachine.setState('ready');
         });
 
         // error → status error
@@ -713,7 +734,7 @@
           if (cloudinaryReady) return;
           cloudinaryFailed = true;
           clearTimeout(cloudinaryTimer);
-          setStatus('error');
+          statusMachine.setState('error');
         });
 
         // Click en cover → reproducir
@@ -778,7 +799,7 @@
           retryOverlay.style.display = 'none';
           fallback.style.display = 'none';
           card.dataset.ytReady = '1';
-          setStatus('ready');
+          statusMachine.setState('ready');
           // Fallback: el estado CUED no siempre dispara en la YT IFrame API
           // (a veces salta de UNSTARTED directo a BUFFERING/PLAYING). Después
           // de 800ms (tiempo suficiente para que el iframe renderice su poster
@@ -810,7 +831,7 @@
           if (embedLoaded) return;
           retryOverlay.style.display = 'flex';
           fallback.style.display = 'flex';
-          setStatus('error');
+          statusMachine.setState('error');
         }
 
         function reloadVideo() {
@@ -820,7 +841,7 @@
           thumb.style.opacity = '1';
           embedLoaded = false;
           // Status: error → loading (rápido)
-          setStatus('loading', true);
+          statusMachine.setState('loading', true);
           var player = YouTubeManager._players[entry.id];
           if (player && player.loadVideoById) {
             player.loadVideoById(entry.id);
@@ -1858,6 +1879,29 @@
 
     // Load comments
     cargarComentarios();
+  }
+
+  // ======================================================================
+  // Test hooks — exposed for vitest + jsdom unit tests
+  // ======================================================================
+  if (typeof window !== 'undefined') {
+    window.__test__ = {
+      StatusMachine: StatusMachine,
+      mergeVideoLists: mergeVideoLists,
+      removeOne: removeOne,
+      buildCard: function (entry) {
+        return YouTubeManager._buildCard(entry);
+      },
+      pauseAllPlayersIncluding: function (activeId) {
+        YouTubeManager._pauseOthers(activeId);
+      },
+      resetPlayers: function () {
+        YouTubeManager._players = {};
+      },
+      addPlayer: function (id, mockPlayer) {
+        YouTubeManager._players[id] = mockPlayer;
+      }
+    };
   }
 
   // Wait for DOM

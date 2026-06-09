@@ -1,0 +1,14 @@
+{
+  "name": "personal_page",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node node_modules/vitest/vitest.mjs run --pool forks",
+    "test:watch": "node node_modules/vitest/vitest.mjs --pool forks",
+    "test:verbose": "node node_modules/vitest/vitest.mjs run --pool forks --reporter verbose"
+  },
+  "devDependencies": {
+    "jsdom": "^25.0.1",
+    "vitest": "^3.2.6"
+  }
+}

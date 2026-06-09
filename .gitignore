@@ -12,3 +12,7 @@ openspec/
 
 # Pi settings
 .pi/
+
+# Node.js
+node_modules/
+package-lock.json
