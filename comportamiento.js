@@ -1501,8 +1501,10 @@
     running: false,
     paused: false,
     rafId: null,
-    _slowDevice: false,
-    _frameSkip: 0,
+    _qualityLevel: 2,    // 2=full, 1=reduced, 0=hidden
+    _fpsSamples: [],
+    _lastFpsTime: 0,
+    _canvas: null,
 
     init: function () {
       if (prefersReduced) return;
@@ -1511,10 +1513,10 @@
       if (!canvas) return;
       var ctx = canvas.getContext('2d');
 
-      // Detectar dispositivo lento (mobile, pocos cores, o batería baja)
-      var isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-      var cores = navigator.hardwareConcurrency || 4;
-      ParticleSystem._slowDevice = isMobile || cores <= 4;
+      // Inicializar monitoreo de FPS dinámico
+      ParticleSystem._lastFpsTime = performance.now();
+      ParticleSystem._fpsSamples = [];
+      ParticleSystem._canvas = canvas;
 
       var W, H;
       function resize() {
@@ -1562,8 +1564,9 @@
         return { x: -30, y: Math.random() * H };
       }
 
-      var PARTICLE_COUNT = ParticleSystem._slowDevice ? 20 : 45;
-      var CONNECT_DIST = ParticleSystem._slowDevice ? 60 : 100;
+      // Cantidad dinámica según calidad, se reajusta en _adjustQuality
+      var PARTICLE_COUNT = 45;
+      var CONNECT_DIST = 100;
       var COLORS = [{ h: 25 }, { h: 280 }, { h: 190 }];
 
       ParticleSystem.particles = Array.from({ length: PARTICLE_COUNT }, function (_, i) {
@@ -1591,16 +1594,44 @@
         }
       });
 
+      ParticleSystem._adjustQuality = function (fps) {
+        var q = ParticleSystem._qualityLevel;
+        if (q === 2 && fps < 45) {
+          ParticleSystem._qualityLevel = 1; // Bajar a reducido
+        } else if (q === 1 && fps < 45) {
+          ParticleSystem._qualityLevel = 0; // Ocultar — muy lento
+          var cvs = ParticleSystem._canvas;
+          if (cvs) cvs.style.display = 'none';
+          ParticleSystem._stopLoop();
+          return;
+        } else if (q === 1 && fps >= 55) {
+          ParticleSystem._qualityLevel = 2; // Subir a full
+        }
+      };
+
       ParticleSystem._draw = function () {
         if (!pageVisible) return;
         if (ParticleSystem.paused) return;
 
-        // Frame budget: solo en dispositivos lentos, saltear frames pares
-        if (ParticleSystem._slowDevice) {
-          ParticleSystem._frameSkip++;
-          if (ParticleSystem._frameSkip % 2 === 0) {
-            ParticleSystem.rafId = requestAnimationFrame(ParticleSystem._draw);
-            return;
+        // === FPS measurement ===
+        var now = performance.now();
+        var delta = now - ParticleSystem._lastFpsTime;
+        ParticleSystem._lastFpsTime = now;
+        if (delta > 0) {
+          ParticleSystem._fpsSamples.push(1000 / delta);
+          if (ParticleSystem._fpsSamples.length >= 30) {
+            var sum = 0;
+            for (var si = 0; si < ParticleSystem._fpsSamples.length; si++) {
+              sum += ParticleSystem._fpsSamples[si];
+            }
+            var avgFps = sum / ParticleSystem._fpsSamples.length;
+            ParticleSystem._fpsSamples = [];
+            ParticleSystem._adjustQuality(avgFps);
+            // Si _adjustQuality ocultó, salir
+            if (ParticleSystem._qualityLevel === 0) {
+              ParticleSystem.rafId = requestAnimationFrame(ParticleSystem._draw);
+              return;
+            }
           }
         }
 
@@ -1609,8 +1640,11 @@
         var pts = ParticleSystem.particles;
         var n = pts.length;
 
-        // === UPDATE (separado del draw) ===
-        for (var i = 0; i < n; i++) {
+        // En calidad reducida, solo procesar las primeras 20 partículas
+        var limit = ParticleSystem._qualityLevel === 1 ? Math.min(20, n) : n;
+
+        // === UPDATE ===
+        for (var i = 0; i < limit; i++) {
           var p = pts[i];
           var dx = mouse.x - p.x;
           var dy = mouse.y - p.y;
@@ -1641,8 +1675,8 @@
           if (p.y > H + 40) p.y = -40;
         }
 
-        // === DRAW: batch de partículas (update + draw separados) ===
-        for (var i2 = 0; i2 < n; i2++) {
+        // === DRAW ===
+        for (var i2 = 0; i2 < limit; i2++) {
           var p2 = pts[i2];
           ctx.beginPath();
           ctx.arc(p2.x, p2.y, p2.size, 0, Math.PI * 2);
@@ -1650,11 +1684,11 @@
           ctx.fill();
         }
 
-        // === CONNECTIONS: O(n²) directo, sin spatial grid (más rápido para <50 partículas) ===
-        if (!ParticleSystem._slowDevice) {
-          for (var i3 = 0; i3 < n; i3++) {
+        // === CONNECTIONS: solo en calidad full ===
+        if (ParticleSystem._qualityLevel === 2) {
+          for (var i3 = 0; i3 < limit; i3++) {
             var a = pts[i3];
-            for (var j = i3 + 1; j < n; j++) {
+            for (var j = i3 + 1; j < limit; j++) {
               var b = pts[j];
               var ddx = a.x - b.x;
               var ddy = a.y - b.y;
@@ -1679,6 +1713,7 @@
 
       ParticleSystem._startLoop = function () {
         if (ParticleSystem.rafId) return;
+        if (ParticleSystem._qualityLevel === 0) return; // No iniciar si oculto
         ParticleSystem.paused = false;
         ParticleSystem.rafId = requestAnimationFrame(ParticleSystem._draw);
       };
@@ -1690,6 +1725,17 @@
         }
       };
 
+      ParticleSystem._showCanvas = function () {
+        var cvs = ParticleSystem._canvas;
+        if (cvs) {
+          cvs.style.display = '';
+          // Recalcular partículas en calidad completa para reintentar
+          ParticleSystem._qualityLevel = 2;
+          ParticleSystem._lastFpsTime = performance.now();
+          ParticleSystem._fpsSamples = [];
+        }
+      };
+
       ParticleSystem.pause = function () {
         ParticleSystem.paused = true;
         ParticleSystem._stopLoop();
@@ -1698,6 +1744,10 @@
       ParticleSystem.resume = function () {
         if (!pageVisible) return;
         ParticleSystem.paused = false;
+        // Si estaba oculto por rendimiento, mostrar canvas y reintentar
+        if (ParticleSystem._qualityLevel === 0) {
+          ParticleSystem._showCanvas();
+        }
         ParticleSystem._startLoop();
       };
 
