@@ -249,13 +249,13 @@
   // 2. Sección "Upload presets" → "Add upload preset"
   // 3. Modo: Unsigned, Nombre: mis_videos
   // 4. Copiar el nombre del preset abajo
-  var CLOUDINARY_CLOUD_NAME = 'ddxn2k6nt';
-  var CLOUDINARY_UPLOAD_PRESET = 'VID_DataBase';
+  var CLOUDINARY_CLOUD_NAME = 'dzso3grs1';
+  var CLOUDINARY_UPLOAD_PRESET = 'Vid_data_test';
   var MAX_FILE_SIZE_MB = 50;
 
   // Supabase
-  var SUPABASE_URL = 'https://pcnyekkuhovfycfxjfpx.supabase.co';
-  var SUPABASE_ANON_KEY = 'sb_publishable_brqVUs-64msjtqctFX02kQ_iU_OQdbt';
+  var SUPABASE_URL = 'https://oilccvjtbppwfylpdpyb.supabase.co';
+  var SUPABASE_ANON_KEY = 'sb_publishable_Dt3veOsdNiWwvNRScoy-RQ_uHWpVtnx';
 
   // ======================================================================
   // SupabaseSync — shared video storage via Supabase REST API
