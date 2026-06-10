@@ -539,6 +539,17 @@
       localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(entries));
     },
 
+    // Add a raw video entry (used by cross-device sync — skips URL parsing)
+    _addEntry: function (entry) {
+      var videos = YouTubeManager.getAll();
+      var exists = videos.some(function (v) { return v.id === entry.id; });
+      if (exists) return 'duplicate';
+      if (videos.length >= MAX_VIDEOS) return 'full';
+      videos.push(entry);
+      localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(videos));
+      return 'added';
+    },
+
     // Colección de players YT.Player (entry.id → YT.Player)
     _players: {},
     _playerIdCounter: 0,
@@ -1066,15 +1077,19 @@
 
         // FASE 7: cleanup a los 800ms (0.4s move + 0.4s entrance). Safety net
         // por si transitionend no dispara (p.ej. tab en background).
+        // NOTA: NO remover opacity/translate inline — el CSS base de .video-card
+        // arranca en opacity:0 / translate:0 24px, y al removerlos la card
+        // desaparece. Mantenemos el estado final visible inline.
         setTimeout(function () {
           siblings.forEach(function (s) {
             s.style.transition = '';
             s.style.transform = '';
           });
           card.style.removeProperty('transition');
-          card.style.removeProperty('opacity');
-          card.style.removeProperty('translate');
         }, 800);
+        // Marcar como animada para que el IntersectionObserver no interfiera
+        // (re-agregando video-card--enter con fill-mode:both o disparando exit)
+        card._animated = true;
       }
 
       // RenderOne siempre agrega una card visible — crear player inmediatamente
@@ -1187,20 +1202,27 @@
         }, 400);
 
         // FASE 7: cleanup a los 800ms
+        // NOTA: NO remover opacity/translate inline — el CSS base de .video-card
+        // arranca en opacity:0 / translate:0 24px, y al removerlos la card
+        // desaparece. Mantenemos el estado final visible inline.
         setTimeout(function () {
           siblings.forEach(function (s) {
             s.style.transition = '';
             s.style.transform = '';
           });
           card.style.removeProperty('transition');
-          card.style.removeProperty('opacity');
-          card.style.removeProperty('translate');
         }, 800);
+        // Marcar como animada para que el IntersectionObserver no interfiera
+        card._animated = true;
       }
 
-      // No crear player — el IntersectionObserver o el caller lo maneja
-      // No tocar _pendingHandlers
-      // No llamar setupScrollOptimizer (no desconectar/reconectar observer)
+      // Observar la card para que el IntersectionObserver cree el player YT
+      // y maneje entrance/exit por scroll. La card se agregó al DOM, pero el
+      // observer de setupScrollOptimizer solo observa cards existentes al
+      // momento de su creación — sin esto el player nunca se crea.
+      if (YouTubeManager._observer) {
+        YouTubeManager._observer.observe(card);
+      }
 
       YouTubeManager._updateCapacityWarning(container);
       return card;
@@ -1757,7 +1779,71 @@
   };
 
   // ======================================================================
-  // Comments system (preserved from original)
+  // CommentSync — shared comment storage via Supabase REST API
+  // ======================================================================
+
+  var CommentSync = {
+    _enabled: false,
+    _baseUrl: '',
+    _headers: {},
+
+    init: function () {
+      if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+      this._enabled = true;
+      this._baseUrl = SUPABASE_URL + '/rest/v1/comentarios';
+      this._headers = {
+        'apikey': SUPABASE_ANON_KEY,
+        'Authorization': 'Bearer ' + SUPABASE_ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      };
+    },
+
+    fetchAll: function () {
+      if (!this._enabled) return Promise.reject('CommentSync not configured');
+      return fetch(this._baseUrl + '?select=*&order=created_at.asc', {
+        headers: this._headers
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Comment fetch error: ' + res.status);
+        return res.json();
+      }).then(function (rows) {
+        return rows.map(function (r) {
+          return { id: r.id, nombre: r.nombre, texto: r.texto, fecha: r.fecha };
+        });
+      });
+    },
+
+    add: function (comment) {
+      if (!this._enabled) return Promise.reject();
+      return fetch(this._baseUrl, {
+        method: 'POST',
+        headers: this._headers,
+        body: JSON.stringify({
+          id: comment.id,
+          nombre: comment.nombre,
+          texto: comment.texto,
+          fecha: comment.fecha
+        })
+      }).then(function (res) {
+        if (!res.ok && res.status !== 409) throw new Error('Comment insert error: ' + res.status);
+      });
+    },
+
+    remove: function (id) {
+      if (!this._enabled) return Promise.reject();
+      return fetch(this._baseUrl + '?id=eq.' + encodeURIComponent(id), {
+        method: 'DELETE',
+        headers: this._headers
+      }).then(function (res) {
+        if (!res.ok) throw new Error('Comment delete error: ' + res.status);
+      });
+    },
+
+    get enabled() { return this._enabled; }
+  };
+
+  // ======================================================================
+  // Comments system
   // ======================================================================
   var formComentario = document.getElementById('form-comentario');
   var listaComentarios = document.getElementById('lista-comentarios');
@@ -1780,6 +1866,17 @@
     if (migro) localStorage.setItem('comentarios', JSON.stringify(comentarios));
     listaComentarios.innerHTML = '';
     comentarios.forEach(function (c) { renderComentario(c); });
+
+    // Load from Supabase in background and merge (remote is source of truth)
+    if (CommentSync.enabled) {
+      CommentSync.fetchAll().then(function (remoteComments) {
+        localStorage.setItem('comentarios', JSON.stringify(remoteComments));
+        listaComentarios.innerHTML = '';
+        remoteComments.forEach(function (c) { renderComentario(c); });
+      }).catch(function () {
+        // Supabase unavailable, keep localStorage version
+      });
+    }
   }
 
   function renderComentario(c) {
@@ -1848,6 +1945,7 @@
   }
 
   function eliminarComentario(id) {
+    CommentSync.remove(id).catch(function () {});
     var comentarios = JSON.parse(localStorage.getItem('comentarios') || '[]');
     comentarios = comentarios.filter(function (c) { return c.id !== id; });
     localStorage.setItem('comentarios', JSON.stringify(comentarios));
@@ -1871,6 +1969,7 @@
 
       var comentarios = JSON.parse(localStorage.getItem('comentarios') || '[]');
       var nuevo = { id: generarIdUnico(), nombre: nombre, texto: texto, fecha: new Date().toLocaleString('es') };
+      CommentSync.add(nuevo).catch(function () {});
       comentarios.push(nuevo);
       localStorage.setItem('comentarios', JSON.stringify(comentarios));
       renderComentario(nuevo);
@@ -1904,6 +2003,7 @@
 
     // Init Supabase sync
     SupabaseSync.init();
+    CommentSync.init();
 
     // YouTube: migrate existing videos on first load
     YouTubeManager.migrateExisting();
@@ -1914,24 +2014,25 @@
       YouTubeManager.render(videoList);
     }
 
-    // Load from Supabase in background and merge
+    // Load from Supabase in background and merge (cross-device sync)
     if (SupabaseSync.enabled && videoList) {
       SupabaseSync.fetchAll().then(function (remoteVideos) {
         var localVideos = YouTubeManager.getAll();
-        if (remoteVideos.length === 0 && localVideos.length > 0) {
-          // Supabase vacío, migrar videos locales a Supabase
-          localVideos.forEach(function (v) {
-            SupabaseSync.add(v).catch(function () {});
-          });
-        } else if (remoteVideos.length > 0) {
-          // Mezclar: remote gana en conflictos, locales que no estén remotos se agregan
-          var merged = mergeVideoLists(remoteVideos, localVideos);
-          localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(merged));
-          YouTubeManager._initialRender = false;
-          YouTubeManager.render(videoList);
-        }
+        var merged = mergeVideoLists(remoteVideos, localVideos);
+
+        // Push local-only videos to Supabase so all users see the same content
+        var remoteIds = {};
+        remoteVideos.forEach(function (v) { remoteIds[v.id] = true; });
+        localVideos.forEach(function (v) {
+          if (!remoteIds[v.id]) SupabaseSync.add(v).catch(function () {});
+        });
+
+        // Persist merged result and re-render
+        localStorage.setItem(VIDEO_STORAGE_KEY, JSON.stringify(merged));
+        YouTubeManager._initialRender = false;
+        YouTubeManager.render(videoList);
       }).catch(function () {
-        // Supabase no disponible, todo ok con localStorage
+        // Supabase unavailable — display stays as-is from localStorage
       });
     }
 
@@ -2070,6 +2171,59 @@
 
     // Load comments
     cargarComentarios();
+
+    // Start polling for cross-device sync (checks every 15s for new/removed videos)
+    initSupabasePoll();
+  }
+
+  // ======================================================================
+  // Cross-device polling — checks Supabase every 15s for new/removed videos
+  // ======================================================================
+
+  function initSupabasePoll() {
+    if (!SupabaseSync.enabled) return;
+
+    setInterval(function () {
+      SupabaseSync.fetchAll().then(function (remoteVideos) {
+        var container = document.getElementById('video-list');
+        if (!container) return;
+
+        var localVideos = YouTubeManager.getAll();
+
+        // Build lookup maps for O(1) comparison
+        var localIds = {};
+        localVideos.forEach(function (v) { localIds[v.id] = true; });
+
+        var remoteMap = {};
+        remoteVideos.forEach(function (v) { remoteMap[v.id] = true; });
+
+        // Add new videos from remote with slide-in animation
+        remoteVideos.forEach(function (v) {
+          if (!localIds[v.id]) {
+            var result = YouTubeManager._addEntry(v);
+            if (result === 'added') {
+              YouTubeManager.addCard(v, container, { animate: true, delay: 0.3, prepend: true });
+            }
+          }
+        });
+
+        // Remove videos that were deleted on another device
+        localVideos.forEach(function (v) {
+          if (!remoteMap[v.id]) {
+            YouTubeManager.removeCard(v.id);
+          }
+        });
+
+        // Push local-only videos to Supabase (catches any edge cases)
+        localVideos.forEach(function (v) {
+          if (!remoteMap[v.id]) {
+            SupabaseSync.add(v).catch(function () {});
+          }
+        });
+      }).catch(function () {
+        // Supabase unavailable — skip this poll cycle
+      });
+    }, 15000);
   }
 
   // ======================================================================
