@@ -945,11 +945,6 @@
       var videos = YouTubeManager.getAll();
       container.innerHTML = '';
 
-      YouTubeManager._updateCapacityWarning(container);
-      containerRef = container;
-      var videos = YouTubeManager.getAll();
-      container.innerHTML = '';
-
       if (YouTubeManager.isNearCapacity()) {
         var warn = document.createElement('p');
         warn.className = 'video-capacity-warn';
@@ -1264,8 +1259,7 @@
           if (card._deleting) return; // No re-clasificar una card en eliminación
           // Índice de la card en la lista → se usa para stagger tanto en
           // entrance como en exit (mismo delay = simetría visual)
-          var allCards = document.querySelectorAll('#video-list .video-card');
-          var idx = Array.prototype.indexOf.call(allCards, card);
+          var idx = Array.from(card.parentNode.children).indexOf(card);
 
           if (entry.isIntersecting) {
             // === ENTRANCE / RE-ENTRY ===
@@ -1368,24 +1362,12 @@
       // desconecta el existente y crea uno fresh.
       YouTubeManager.setupScrollOptimizer();
 
-      // Visibility check: solo animar cards con ≥50% de visibilidad en el scroll
-      // container. Las que no pasen este umbral las maneja el IntersectionObserver
-      // cuando entren al viewport (esa animación se afina en el fix de scroll).
-      var scrollContainer = document.querySelector('.panel-content');
-      var containerRect = scrollContainer ? scrollContainer.getBoundingClientRect() : null;
-
-      // Animar cards visibles con stagger de 80ms
+      // Stagger 80ms por card → se sienten "una por una" sin ser lento
+      // Nota: no hay filtro de visibilidad acá porque todas las cards están
+      // en el viewport cuando animateEntries se llama desde PanelController.open().
+      // El IntersectionObserver (en setupScrollOptimizer) maneja las cards
+      // que entran al viewport durante el scroll.
       cards.forEach(function (card, i) {
-        if (containerRect) {
-          var cardRect = card.getBoundingClientRect();
-          var visibleTop = Math.max(cardRect.top, containerRect.top);
-          var visibleBottom = Math.min(cardRect.bottom, containerRect.bottom);
-          var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-          // Skip cards con menos del 50% visible
-          if (visibleHeight < cardRect.height * 0.5) return;
-        }
-
-        // Stagger 80ms por card → se sienten "una por una" sin ser lento
         card.style.setProperty('--delay', Math.min(i, 10) * 0.08 + 's');
         card._animated = true;
         card.classList.add('video-card--enter');
@@ -1519,6 +1501,20 @@
   // ======================================================================
   // Particle System with spatial grid optimization + pause/resume
   // ======================================================================
+
+  function buildSpatialGrid(pts, cellSize) {
+    var grid = {};
+    for (var i = 0; i < pts.length; i++) {
+      var p = pts[i];
+      var cx = Math.floor(p.x / cellSize);
+      var cy = Math.floor(p.y / cellSize);
+      var key = cx + ',' + cy;
+      if (!grid[key]) grid[key] = [];
+      grid[key].push(i);
+    }
+    return grid;
+  }
+
   var ParticleSystem = {
     running: false,
     paused: false,
@@ -1708,23 +1704,41 @@
 
         // === CONNECTIONS: solo en calidad full ===
         if (ParticleSystem._qualityLevel === 2) {
+          // Build spatial hash grid: cellKey → [indices]
+          var grid = {};
+          for (var gi = 0; gi < limit; gi++) {
+            var gp = pts[gi];
+            var gcx = Math.floor(gp.x / CONNECT_DIST);
+            var gcy = Math.floor(gp.y / CONNECT_DIST);
+            var gk = gcx + ',' + gcy;
+            if (!grid[gk]) grid[gk] = [];
+            grid[gk].push(gi);
+          }
+          // 3×3 cell neighborhood replaces O(n²) all-pairs
           for (var i3 = 0; i3 < limit; i3++) {
             var a = pts[i3];
-            for (var j = i3 + 1; j < limit; j++) {
-              var b = pts[j];
-              var ddx = a.x - b.x;
-              var ddy = a.y - b.y;
-              if (ddx > CONNECT_DIST || ddx < -CONNECT_DIST) continue;
-              if (ddy > CONNECT_DIST || ddy < -CONNECT_DIST) continue;
-              var d2 = ddx * ddx + ddy * ddy;
-              if (d2 < CONNECT_DIST_SQ) {
-                var alpha = 0.15 * (1 - Math.sqrt(d2) / CONNECT_DIST);
-                ctx.beginPath();
-                ctx.moveTo(a.x, a.y);
-                ctx.lineTo(b.x, b.y);
-                ctx.strokeStyle = 'oklch(55% 0.25 25 / ' + alpha + ')';
-                ctx.lineWidth = 0.5;
-                ctx.stroke();
+            var cellX = Math.floor(a.x / CONNECT_DIST);
+            var cellY = Math.floor(a.y / CONNECT_DIST);
+            for (var dx = -1; dx <= 1; dx++) {
+              for (var dy = -1; dy <= 1; dy++) {
+                var nk = (cellX + dx) + ',' + (cellY + dy);
+                var neighbors = grid[nk];
+                if (!neighbors) continue;
+                for (var ni = 0; ni < neighbors.length; ni++) {
+                  var j = neighbors[ni];
+                  if (j <= i3) continue;
+                  var b = pts[j];
+                  var d2 = (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y);
+                  if (d2 < CONNECT_DIST_SQ) {
+                    var alpha = 0.15 * (1 - Math.sqrt(d2) / CONNECT_DIST);
+                    ctx.beginPath();
+                    ctx.moveTo(a.x, a.y);
+                    ctx.lineTo(b.x, b.y);
+                    ctx.strokeStyle = 'oklch(55% 0.25 25 / ' + alpha + ')';
+                    ctx.lineWidth = 0.5;
+                    ctx.stroke();
+                  }
+                }
               }
             }
           }
@@ -1852,6 +1866,21 @@
     return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 6);
   }
 
+  function diffComments(remoteComments, currentIds) {
+    // Returns { toAdd: [...comments], toRemove: [...ids] }
+    // Pure function — no side effects, easy to test.
+    var remoteIds = {};
+    remoteComments.forEach(function (c) { remoteIds[c.id] = true; });
+
+    var currentIdMap = {};
+    currentIds.forEach(function (id) { currentIdMap[id] = true; });
+
+    var toAdd = remoteComments.filter(function (c) { return !currentIdMap[c.id]; });
+    var toRemove = currentIds.filter(function (id) { return !remoteIds[id]; });
+
+    return { toAdd: toAdd, toRemove: toRemove };
+  }
+
   function cargarComentarios() {
     if (!listaComentarios) return;
     var comentarios = JSON.parse(localStorage.getItem('comentarios') || '[]');
@@ -1868,11 +1897,49 @@
     comentarios.forEach(function (c) { renderComentario(c); });
 
     // Load from Supabase in background and merge (remote is source of truth)
+    // Uses incremental DOM diff instead of full innerHTML rebuild.
+    // Falls back to full rebuild on any error (try/catch guard).
     if (CommentSync.enabled) {
       CommentSync.fetchAll().then(function (remoteComments) {
         localStorage.setItem('comentarios', JSON.stringify(remoteComments));
-        listaComentarios.innerHTML = '';
-        remoteComments.forEach(function (c) { renderComentario(c); });
+
+        try {
+          // Incremental merge: diff remote vs current DOM, patch only what changed
+          var currentItems = listaComentarios.querySelectorAll('.comentario-item');
+          var currentIds = [];
+          var currentMap = {};
+          currentItems.forEach(function (item) {
+            var id = item.getAttribute('data-id');
+            if (id != null) {
+              currentIds.push(id);
+              currentMap[id] = item;
+            }
+          });
+
+          var diff = diffComments(remoteComments, currentIds);
+
+          // Remove deleted: animate .eliminando → .colapsando → removeChild
+          diff.toRemove.forEach(function (id) {
+            var item = currentMap[id];
+            if (!item) return;
+            item.classList.add('eliminando');
+            setTimeout(function () {
+              item.classList.add('colapsando');
+              setTimeout(function () {
+                if (item.parentNode) item.parentNode.removeChild(item);
+              }, 600);
+            }, 500);
+          });
+
+          // Add new: prepend via renderComentario
+          diff.toAdd.forEach(function (c) {
+            renderComentario(c);
+          });
+        } catch (_) {
+          // Fallback: full rebuild on any error in incremental merge
+          listaComentarios.innerHTML = '';
+          remoteComments.forEach(function (c) { renderComentario(c); });
+        }
       }).catch(function () {
         // Supabase unavailable, keep localStorage version
       });
@@ -1883,6 +1950,7 @@
     if (!listaComentarios) return;
     var div = document.createElement('div');
     div.className = 'comentario-item';
+    div.setAttribute('data-id', c.id);
     div.innerHTML =
       '<div class="comentario-header">' +
         '<span class="comentario-nombre">' + escapeHtml(c.nombre) + '</span>' +
