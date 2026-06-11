@@ -73,6 +73,36 @@ describe('Render Optimization (Phase G)', function () {
   });
 
   // ====================================================================
+  // G1b: render() approval test — captures rendering contract
+  // ====================================================================
+  describe('G1b — render() output', function () {
+    it('should render video cards into the container when videos exist', function () {
+      var container = document.createElement('div');
+      var videos = [
+        { id: 'vid1', source: 'youtube', addedAt: new Date().toISOString() },
+        { id: 'vid2', source: 'youtube', addedAt: new Date().toISOString() },
+        { id: 'vid3', source: 'youtube', addedAt: new Date().toISOString() }
+      ];
+      localStorage.setItem('youtube-videos', JSON.stringify(videos));
+
+      render(container);
+
+      var cards = container.querySelectorAll('.video-card');
+      expect(cards.length).toBe(3);
+      expect(cards[0].dataset.videoId).toBe('vid1');
+      expect(cards[1].dataset.videoId).toBe('vid2');
+      expect(cards[2].dataset.videoId).toBe('vid3');
+    });
+
+    it('should show empty state when no videos exist', function () {
+      var container = document.createElement('div');
+      localStorage.clear();
+      render(container);
+      expect(container.innerHTML.indexOf('No hay videos') !== -1).toBe(true);
+    });
+  });
+
+  // ====================================================================
   // G2: addCard()
   // ====================================================================
   describe('G2 — addCard()', function () {

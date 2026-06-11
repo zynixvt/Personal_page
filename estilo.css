@@ -915,7 +915,6 @@
   .slide-in-up {
     animation: slide-in-up 0.4s var(--ease-smooth) both;
     animation-delay: calc(var(--i, 0) * 80ms);
-    will-change: transform;
   }
 
   /* ===== Music List ===== */
@@ -1142,7 +1141,6 @@
     transition: transform 350ms var(--ease-smooth);
     display: flex;
     flex-direction: column;
-    will-change: transform;
     overflow: hidden;
     contain: layout style paint;
   }

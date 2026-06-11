@@ -56,7 +56,24 @@ function makeEl(tag) {
     dataset: dataset,
     style: style,
     textContent: '',
-    innerHTML: '',
+    _innerHTML: '',
+    get innerHTML() { return this._innerHTML; },
+    set innerHTML(v) {
+      this._innerHTML = String(v);
+      // Clear existing children since we're replacing content
+      ch.length = 0;
+      // Minimal HTML parser: create child elements from <tag> or <tag class="..." data-id="...">
+      var re = /<(\w+)(?:\s+class="([^"]*)")?(?:\s+data-id="([^"]*)")?(?:\s+[^>]*)?>/g;
+      var m;
+      while ((m = re.exec(v)) !== null) {
+        var child = makeEl(m[1]);
+        child._parentEl = el;
+        if (m[2]) child.className = m[2];
+        if (m[3]) child.setAttribute('data-id', m[3]);
+        ch.push(child);
+      }
+    },
+    prepend: function (c) { ch.splice(0, 0, c); c._parentEl = el; if (typeof c.parentNode === 'undefined') { Object.defineProperty(c, 'parentNode', { get: function() { return c._parentEl || null; } }); } return c; },
     appendChild: function (c) { ch.push(c); c._parentEl = el; if (typeof c.parentNode === 'undefined') { Object.defineProperty(c, 'parentNode', { get: function() { return c._parentEl || null; } }); } return c; },
     removeChild: function (c) { var i = ch.indexOf(c); if (i !== -1) { ch.splice(i, 1); c._parentEl = null; } return c; },
     insertBefore: function (child, ref) {
