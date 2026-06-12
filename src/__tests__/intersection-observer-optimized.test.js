@@ -57,10 +57,10 @@ function getCardIndex(card) {
 
 /**
  * Helper: computes the stagger delay from an index.
- * Matches the real formula: Math.min(idx, 10) * 0.08s
+ * Matches the real formula: Math.min(idx, 10) * 0.06s
  */
 function staggerDelay(idx) {
-  return Math.min(idx, 10) * 0.08;
+  return Math.min(idx, 10) * 0.06;
 }
 
 describe('IntersectionObserver Card Index (Phase 3)', function () {
@@ -103,17 +103,17 @@ describe('IntersectionObserver Card Index (Phase 3)', function () {
       expect(staggerDelay(0)).toBe(0);
     });
 
-    it('should produce 0.16s delay for idx=2', function () {
-      expect(staggerDelay(2)).toBe(0.16);
+    it('should produce 0.12s delay for idx=2', function () {
+      expect(staggerDelay(2)).toBe(0.12);
     });
 
-    it('should produce 0.80s delay for idx=10', function () {
-      expect(staggerDelay(10)).toBe(0.80);
+    it('should produce 0.60s delay for idx=10', function () {
+      expect(staggerDelay(10)).toBe(0.60);
     });
 
-    it('should clamp delay to 10 (idx=12 → delay=0.80s)', function () {
-      expect(staggerDelay(12)).toBe(0.80);
-      expect(staggerDelay(20)).toBe(0.80);
+    it('should clamp delay to 10 (idx=12 → delay=0.60s)', function () {
+      expect(staggerDelay(12)).toBe(0.60);
+      expect(staggerDelay(20)).toBe(0.60);
     });
 
     it('should produce correct delay for each card index using the formula', function () {
@@ -121,7 +121,7 @@ describe('IntersectionObserver Card Index (Phase 3)', function () {
       ctx.cards.forEach(function (card, i) {
         var idx = getCardIndex(card);
         var delay = staggerDelay(idx);
-        var expected = i <= 10 ? i * 0.08 : 10 * 0.08;
+        var expected = i <= 10 ? i * 0.06 : 10 * 0.06;
         expect(delay).toBe(expected);
       });
     });
@@ -152,8 +152,8 @@ describe('IntersectionObserver Card Index (Phase 3)', function () {
       expect(newIdx).toBe(1);
       // But oldIdx is 0 (only .video-card elements)
       expect(oldIdx).toBe(0);
-      // Both are consistent — stagger delay is Math.min(idx, 10)*0.08
-      // so the tiny offset difference (≤0.08s) is visually negligible,
+      // Both are consistent — stagger delay is Math.min(idx, 10)*0.06
+      // so the tiny offset difference (≤0.06s) is visually negligible,
       // and only applies when the capacity warning is shown (50+ videos)
       // where all cards are already past their entrance animation.
     });
@@ -166,17 +166,17 @@ describe('IntersectionObserver Card Index (Phase 3)', function () {
       var idx = getCardIndex(card);
       var delay = staggerDelay(idx);
       card.style.setProperty('--delay', delay + 's');
-      expect(card.style.getPropertyValue('--delay')).toBe('0.24s');
+      expect(card.style.getPropertyValue('--delay')).toBe('0.18s');
     });
 
-    it('should apply clamp at --delay 0.80s for card at position 15', function () {
+    it('should apply clamp at --delay 0.60s for card at position 15', function () {
       var ctx = createVideoList(16);
       var card = ctx.cards[15];
       var idx = getCardIndex(card);
       var delay = staggerDelay(idx);
       card.style.setProperty('--delay', delay + 's');
-      // idx=15, Math.min(15, 10)=10, 10*0.08=0.80
-      expect(card.style.getPropertyValue('--delay')).toBe('0.8s');
+      // idx=15, Math.min(15, 10)=10, 10*0.06=0.60
+      expect(card.style.getPropertyValue('--delay')).toBe('0.6s');
     });
   });
 });

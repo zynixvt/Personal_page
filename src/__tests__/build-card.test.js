@@ -105,7 +105,7 @@ describe('_buildCard DOM structure', function () {
     expect(thumb).not.toBeNull();
     var video = card.querySelector('video');
     expect(video).not.toBeNull();
-    expect(video.src.includes('cloudinary.com')).toBe(true);
+    expect(video.dataset.src.includes('cloudinary.com')).toBe(true);
   });
 
   it('should have a "Subido" badge for Cloudinary sources', function () {

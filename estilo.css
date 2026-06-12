@@ -557,7 +557,7 @@
   }
 
     .video-card {
-    flex: 0 1 280px;
+    flex: 0 1 calc((100% - 32px) / 3);
     max-width: 400px;
     min-width: 240px;
     padding: 8px 8px 12px;
@@ -627,7 +627,7 @@
     border-radius: 50%;
     flex-shrink: 0;
     background: #ffc107; /* yellow = loading */
-    transition: background 0.35s ease;
+    transition: background 0.2s ease;
   }
   .video-status-dot.status-ready { background: #22c55e; }  /* green */
   .video-status-dot.status-error { background: #ef4444; }  /* red */
@@ -767,13 +767,13 @@
     aspect-ratio: 16 / 9;
   }
 
-  /* Virtual scrolling nativo + reserva de espacio */
+  /* Estado base invisible: arranca oculto y desplazado hacia abajo.
+     animation-fill-mode: both mantiene este estado durante el delay
+     y el estado final visible después de animar → sin flash al re-abrir.
+     Sin content-visibility:auto — el IntersectionObserver controla qué
+     está visible, y el navegador no debe descartar el render de las cards
+     lejanas (causaba flash negro al recargar). */
   .video-card {
-    content-visibility: auto;
-    contain-intrinsic-size: 400px;
-    /* Estado base invisible: arranca oculto y desplazado hacia abajo.
-       animation-fill-mode: both mantiene este estado durante el delay
-       y el estado final visible después de animar → sin flash al re-abrir. */
     opacity: 0;
     translate: 0 24px;
   }
@@ -837,7 +837,7 @@
   }
 
   .video-card--enter {
-    animation: video-reveal 0.4s var(--ease-smooth) both;
+    animation: video-reveal 0.25s var(--ease-smooth) both;
     animation-delay: var(--delay, 0s);
   }
 
@@ -851,7 +851,7 @@
   }
 
   .video-card--exit {
-    animation: video-hide 0.4s var(--ease-smooth) both;
+    animation: video-hide 0.25s var(--ease-smooth) both;
     animation-delay: var(--delay, 0s);
   }
 
@@ -869,8 +869,8 @@
     opacity: 0;
     pointer-events: none;
     overflow: hidden;
-    transition: clip-path 0.55s cubic-bezier(0.65, 0, 0.35, 1),
-                opacity    0.55s cubic-bezier(0.65, 0, 0.35, 1);
+    transition: clip-path 0.4s cubic-bezier(0.65, 0, 0.35, 1),
+                opacity    0.4s cubic-bezier(0.65, 0, 0.35, 1);
   }
 
   /* Placeholder usado por el FLIP de renderOne: la card ocupa su width
@@ -900,10 +900,10 @@
     margin: 0;
     padding-inline: 0;
     overflow: hidden;
-    transition: flex-basis 0.4s var(--ease-smooth),
-                max-width 0.4s var(--ease-smooth),
-                min-width 0.4s var(--ease-smooth),
-                margin 0.4s var(--ease-smooth);
+    transition: flex-basis 0.25s var(--ease-smooth),
+                max-width 0.25s var(--ease-smooth),
+                min-width 0.25s var(--ease-smooth),
+                margin 0.25s var(--ease-smooth);
   }
 
   /* ===== Staggered Entrance Animation ===== */
@@ -913,7 +913,7 @@
   }
 
   .slide-in-up {
-    animation: slide-in-up 0.4s var(--ease-smooth) both;
+    animation: slide-in-up 0.25s var(--ease-smooth) both;
     animation-delay: calc(var(--i, 0) * 80ms);
   }
 
@@ -1138,7 +1138,7 @@
     z-index: 2000;
     background: var(--surface);
     transform: translateX(105%);
-    transition: transform 350ms var(--ease-smooth);
+    transition: transform 250ms var(--ease-smooth);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -1175,7 +1175,7 @@
     font-weight: 500;
     padding: 8px 16px;
     cursor: pointer;
-    transition: all 0.25s var(--ease-smooth);
+    transition: all 0.15s var(--ease-smooth);
     min-width: 44px;
     min-height: 44px;
   }
