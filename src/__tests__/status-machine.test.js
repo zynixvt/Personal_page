@@ -138,4 +138,44 @@ describe('StatusMachine', () => {
     var result = machine.setState('ready');
     expect(result).toBeUndefined();
   });
+
+  it('should transition error → loading → ready (reset on scroll re-entry)', function () {
+    vi.useFakeTimers();
+    // Simular card que falló al cargar
+    machine.setState('error');
+    vi.advanceTimersByTime(400);
+    expect(statusDot.classList.contains('status-error')).toBe(true);
+    expect(statusText.textContent).toBe('Error de carga');
+
+    // _startPreload resetea a loading al re-entrar en zona de precarga
+    machine.setState('loading', true);
+    vi.advanceTimersByTime(150); // fast delay
+    expect(statusDot.classList.contains('status-loading')).toBe(true);
+    expect(statusText.classList.contains('status-loading')).toBe(true);
+    expect(statusText.textContent).toBe('Cargando...');
+
+    // La recarga subsiguiente funciona
+    machine.setState('ready');
+    vi.advanceTimersByTime(400);
+    expect(statusDot.classList.contains('status-ready')).toBe(true);
+    expect(statusText.textContent).toBe('Listo');
+  });
+
+  it('should transition error → loading → error (error persists after retry)', function () {
+    vi.useFakeTimers();
+    // Primer error
+    machine.setState('error');
+    vi.advanceTimersByTime(400);
+
+    // Reset a loading (como hace _startPreload)
+    machine.setState('loading', true);
+    vi.advanceTimersByTime(150);
+    expect(statusText.textContent).toBe('Cargando...');
+
+    // Vuelve a fallar
+    machine.setState('error');
+    vi.advanceTimersByTime(400);
+    expect(statusDot.classList.contains('status-error')).toBe(true);
+    expect(statusText.textContent).toBe('Error de carga');
+  });
 });

@@ -105,7 +105,7 @@ describe('animateEntries (Phase 4)', function () {
       var cards = Array.from(container.children);
       expect(cards.length).toBe(5);
       cards.forEach(function (card, i) {
-        var expectedDelay = Math.min(i, 10) * 0.08 + 's';
+        var expectedDelay = Math.min(i, 10) * 0.06 + 's';
         expect(card.style.getPropertyValue('--delay')).toBe(expectedDelay);
       });
       restore();
@@ -120,7 +120,7 @@ describe('animateEntries (Phase 4)', function () {
       var cards = Array.from(container.children);
       expect(cards.length).toBe(15);
       var delayAt10 = cards[10].style.getPropertyValue('--delay');
-      expect(delayAt10).toBe('0.8s');
+      expect(delayAt10).toBe('0.6s');
       for (var i = 10; i < 15; i++) {
         expect(cards[i].style.getPropertyValue('--delay')).toBe(delayAt10);
       }

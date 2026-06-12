@@ -35,25 +35,31 @@ describe('removeOne', function () {
     return card;
   }
 
+  // Setup mock observers on YouTubeManager so removeOne can unobserve
+  function setupObservers() {
+    var mockObs = { unobserve: vi.fn() };
+    var YM = window.__test__.YouTubeManager;
+    YM._viewportObserver = mockObs;
+    YM._preloadObserver = mockObs;
+    YM._maintenanceObserver = mockObs;
+  }
+
   it('should add --sweep-out class immediately', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
-    removeOneFn(card, 'test-id', observer);
-
+    setupObservers();
+    removeOneFn(card, 'test-id');
     expect(card.classList.contains('video-card--sweep-out')).toBe(true);
   });
 
   it('should set _deleting flag to prevent double-trigger', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
-    removeOneFn(card, 'test-id', observer);
+    setupObservers();
+    removeOneFn(card, 'test-id');
     expect(card._deleting).toBe(true);
 
     // Second call should be a no-op
     vi.advanceTimersByTime(100);
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
     // Card should still be in the DOM if it was appended somewhere
     // (at this point, _deleting should remain true)
@@ -62,19 +68,22 @@ describe('removeOne', function () {
 
   it('should call observer.unobserve before animation starts', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
+    var mockObs = { unobserve: vi.fn() };
+    var YM = window.__test__.YouTubeManager;
+    YM._viewportObserver = mockObs;
+    YM._preloadObserver = mockObs;
+    YM._maintenanceObserver = mockObs;
 
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
-    expect(observer.unobserve).toHaveBeenCalledWith(card);
+    expect(mockObs.unobserve).toHaveBeenCalledWith(card);
   });
 
   it('should add --collapse class after sweep fallback timer (850ms)', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
+    setupObservers();
     // We don't simulate transitionend, so the 850ms fallback fires
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
     // Before fallback: no collapse class yet
     expect(card.classList.contains('video-card--collapse')).toBe(false);
@@ -88,12 +97,11 @@ describe('removeOne', function () {
 
   it('should remove card from DOM after collapse fallback', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
+    setupObservers();
     document.body.appendChild(card);
     expect(document.body.contains(card)).toBe(true);
 
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
     // Advance past sweep fallback (850ms) + collapse fallback (400ms)
     vi.advanceTimersByTime(1300);
@@ -102,28 +110,23 @@ describe('removeOne', function () {
     expect(document.body.contains(card)).toBe(false);
   });
 
-  it('should handle null/undefined observer gracefully', function () {
+  it('should handle observers being null gracefully', function () {
     var card = createCard();
+    var YM = window.__test__.YouTubeManager;
+    YM._viewportObserver = null;
+    YM._preloadObserver = null;
+    YM._maintenanceObserver = null;
 
     expect(function () {
-      removeOneFn(card, 'test-id', null);
-    }).not.toThrow();
-  });
-
-  it('should handle undefined observer gracefully', function () {
-    var card = createCard();
-
-    expect(function () {
-      removeOneFn(card, 'test-id', undefined);
+      removeOneFn(card, 'test-id');
     }).not.toThrow();
   });
 
   it('should clean up enter/exit classes before applying sweep', function () {
     var card = createCard();
+    setupObservers();
     card.classList.add('video-card--enter');
-    var observer = { unobserve: vi.fn() };
-
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
     // enter and exit classes must be removed for sweep to work
     expect(card.classList.contains('video-card--enter')).toBe(false);
@@ -132,20 +135,17 @@ describe('removeOne', function () {
 
   it('should set opacity to 1 before sweep', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
-    removeOneFn(card, 'test-id', observer);
-
+    setupObservers();
+    removeOneFn(card, 'test-id');
     expect(card.style.opacity).toBe('1');
   });
 
   it('should not throw if card has no parentNode', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
-
+    setupObservers();
     // Card is not appended to document.body — no parentNode
     expect(function () {
-      removeOneFn(card, 'test-id', observer);
+      removeOneFn(card, 'test-id');
     }).not.toThrow();
 
     // Advance through all timers
@@ -154,10 +154,10 @@ describe('removeOne', function () {
 
   it('should handle the full sweep → collapse → remove sequence via fallback', function () {
     var card = createCard();
-    var observer = { unobserve: vi.fn() };
+    setupObservers();
     document.body.appendChild(card);
 
-    removeOneFn(card, 'test-id', observer);
+    removeOneFn(card, 'test-id');
 
     // Phase checkpoints
     expect(card.classList.contains('video-card--sweep-out')).toBe(true); // sweep added

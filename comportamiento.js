@@ -111,12 +111,12 @@
         //   T=1050: form card termina (0.4s duration)
         //   T=1350: videos visibles (≥50%) animan (form done + 0.3s wait)
 
-        // Desconectar observer: si quedara activo, dispararía al abrir el panel
-        // y agregaría la clase de animación antes de tiempo. Se reconecta
-        // en animateEntries al final de la ventana de animación.
-        if (YouTubeManager._observer) {
-          YouTubeManager._observer.disconnect();
-        }
+        // Desconectar observers: si quedaran activos, dispararían al abrir
+        // el panel y agregarían la clase de animación antes de tiempo.
+        // Se reconectan en animateEntries (vía setupScrollOptimizer).
+        if (YouTubeManager._viewportObserver) YouTubeManager._viewportObserver.disconnect();
+        if (YouTubeManager._preloadObserver) YouTubeManager._preloadObserver.disconnect();
+        if (YouTubeManager._maintenanceObserver) YouTubeManager._maintenanceObserver.disconnect();
 
         // Reset form card para re-open
         var formCard = document.querySelector('.video-form-card');
@@ -137,13 +137,13 @@
             void formCard.offsetWidth;
             formCard.classList.add('video-form-card--enter');
           }
-        }, 650);
+        }, 500);
 
-        // 2) Videos animation: T=1350ms (form done + 0.3s)
+        // 2) Videos animation: T=1050ms (form done + 0.3s)
         //    animateEntries internamente filtra por ≥50% de visibilidad
         setTimeout(function () {
           YouTubeManager.animateEntries();
-        }, 1350);
+        }, 1050);
       }
 
       // Staggered entrance for list items
@@ -166,12 +166,14 @@
     close: function () {
       if (!PanelController.activePanel) return;
 
-      // Disconnect observer when closing videos panel (reconnected on next open)
+      // Disconnect observers when closing videos panel (reconnected on next open)
       if (PanelController.activePanel === 'videos') {
-        if (YouTubeManager._observer) {
-          YouTubeManager._observer.disconnect();
-          YouTubeManager._observer = null;
-        }
+        if (YouTubeManager._viewportObserver) YouTubeManager._viewportObserver.disconnect();
+        if (YouTubeManager._preloadObserver) YouTubeManager._preloadObserver.disconnect();
+        if (YouTubeManager._maintenanceObserver) YouTubeManager._maintenanceObserver.disconnect();
+        YouTubeManager._viewportObserver = null;
+        YouTubeManager._preloadObserver = null;
+        YouTubeManager._maintenanceObserver = null;
       }
 
       var panel = PanelController.panels.get(PanelController.activePanel);
@@ -361,7 +363,7 @@
       clearTimeout(_statusTimeoutId);
       var prevState = _state || 'loading';
       _state = state;
-      var delay = fast ? 150 : 400;
+      var delay = fast ? 100 : 300;
 
       if (state === 'hide') {
         text.className = 'video-status-text status-slide-out';
@@ -588,6 +590,14 @@
         // Si el target fue removido del DOM (render() entre medio), saltear
         if (!document.getElementById(targetDiv.id)) return true;
 
+        // Si la card salió de la zona de precarga antes de que YT API
+        // estuviera lista, no crear el player ahora (se creará cuando
+        // la card vuelva a entrar via _startPreload).
+        if (YouTubeManager._cancelledTargets && YouTubeManager._cancelledTargets.has(targetDiv.id)) {
+          YouTubeManager._cancelledTargets.delete(targetDiv.id);
+          return true;
+        }
+
         try {
           var player = new YT.Player(targetDiv.id, {
             videoId: id,
@@ -733,40 +743,16 @@
         cover.appendChild(playBtn);
         wrapper.appendChild(cover);
 
-        // Video nativo (debajo del cover)
+        // Video nativo (debajo del cover) — src diferido hasta preload zone
         var videoEl = document.createElement('video');
-        videoEl.src = entry.url;
+        videoEl.dataset.src = entry.url;
         videoEl.controls = true;
         videoEl.playsInline = true;
-        videoEl.preload = 'metadata';
         videoEl.title = entry.title || 'Video subido';
         wrapper.appendChild(videoEl);
 
-        // Estado interno
-        var cloudinaryReady = false;
-        var cloudinaryFailed = false;
-        var cloudinaryTimer = setTimeout(function () {
-          if (!cloudinaryReady) {
-            cloudinaryFailed = true;
-            statusMachine.setState('error');
-          }
-        }, 20000);
-
-        // canplay → status ready
-        videoEl.addEventListener('canplay', function () {
-          if (cloudinaryReady || cloudinaryFailed) return;
-          cloudinaryReady = true;
-          clearTimeout(cloudinaryTimer);
-          statusMachine.setState('ready');
-        });
-
-        // error → status error
-        videoEl.addEventListener('error', function () {
-          if (cloudinaryReady) return;
-          cloudinaryFailed = true;
-          clearTimeout(cloudinaryTimer);
-          statusMachine.setState('error');
-        });
+        // Guardar statusMachine para _startPreload
+        card._sm = statusMachine;
 
         // Click en cover → reproducir
         cover.addEventListener('click', function () {
@@ -860,6 +846,10 @@
 
         function showFailed() {
           if (embedLoaded) return;
+          // Si _cancelPreload marcó la card antes de que el error llegue,
+          // no mostrar "Error de carga" en una card que ya no está en
+          // precarga. _startPreload limpiará el flag al re-entrar.
+          if (card._ytCancelled) return;
           retryOverlay.style.display = 'flex';
           fallback.style.display = 'flex';
           statusMachine.setState('error');
@@ -903,6 +893,14 @@
           onError: onError
         });
         card.dataset.ytPending = playerId;
+
+        // Guardar los handlers en la card para poder reinstaurarlos
+        // si _cancelPreload destroy el player (scroll >4 filas).
+        card._ytHandlers = {
+          onReady: onReady,
+          onStateChange: onStateChange,
+          onError: onError
+        };
         // No crear el player ahora — se crea en setupScrollOptimizer cuando entra al viewport
 
         retryTimers.push(setTimeout(showFailed, 20000));
@@ -922,7 +920,7 @@
       deleteBtn.addEventListener('click', function () {
         if (card._deleting) return; // Ya en curso: no-op
         // Delega en removeOne (YT teardown + storage + animación bifásica).
-        removeOne(card, entry.id, YouTubeManager._observer);
+        removeOne(card, entry.id);
       });
       card.appendChild(deleteBtn);
 
@@ -937,10 +935,13 @@
       YouTubeManager._initialRender = true;
       YouTubeManager._destroyPlayers();
       YouTubeManager._pendingHandlers.clear();
-      if (YouTubeManager._observer) {
-        YouTubeManager._observer.disconnect();
-        YouTubeManager._observer = null;
-      }
+      YouTubeManager._cancelledTargets = new Set();
+      if (YouTubeManager._viewportObserver) YouTubeManager._viewportObserver.disconnect();
+      if (YouTubeManager._preloadObserver) YouTubeManager._preloadObserver.disconnect();
+      if (YouTubeManager._maintenanceObserver) YouTubeManager._maintenanceObserver.disconnect();
+      YouTubeManager._viewportObserver = null;
+      YouTubeManager._preloadObserver = null;
+      YouTubeManager._maintenanceObserver = null;
       containerRef = container;
       var videos = YouTubeManager.getAll();
       container.innerHTML = '';
@@ -1085,6 +1086,7 @@
         // Marcar como animada para que el IntersectionObserver no interfiera
         // (re-agregando video-card--enter con fill-mode:both o disparando exit)
         card._animated = true;
+        card._everEntered = true;
       }
 
       // RenderOne siempre agrega una card visible — crear player inmediatamente
@@ -1209,15 +1211,15 @@
         }, 800);
         // Marcar como animada para que el IntersectionObserver no interfiera
         card._animated = true;
+        card._everEntered = true;
       }
 
-      // Observar la card para que el IntersectionObserver cree el player YT
-      // y maneje entrance/exit por scroll. La card se agregó al DOM, pero el
-      // observer de setupScrollOptimizer solo observa cards existentes al
-      // momento de su creación — sin esto el player nunca se crea.
-      if (YouTubeManager._observer) {
-        YouTubeManager._observer.observe(card);
-      }
+      // Observar la card con los 3 observers para que manejen preload,
+      // entrance/exit por scroll, y cleanup. La card se agregó al DOM
+      // después de setupScrollOptimizer, así que hay que observarla manualmente.
+      if (YouTubeManager._viewportObserver) YouTubeManager._viewportObserver.observe(card);
+      if (YouTubeManager._preloadObserver) YouTubeManager._preloadObserver.observe(card);
+      if (YouTubeManager._maintenanceObserver) YouTubeManager._maintenanceObserver.observe(card);
 
       YouTubeManager._updateCapacityWarning(container);
       return card;
@@ -1232,97 +1234,184 @@
 
       // Usar removeOne para la animaci\u00F3n b\u00EDf\u00E1sica (clip-path sweep + collapse)
       // removeOne internamente destruye SOLO ese player, llama remove(id)
-      // y desvincula del observer.
-      removeOne(card, videoId, YouTubeManager._observer);
+      // y desvincula de todos los observers.
+      removeOne(card, videoId);
 
       // Actualizar warning de capacidad despu\u00E9s de la eliminaci\u00F3n
       YouTubeManager._updateCapacityWarning(container);
     },
 
-    setupScrollOptimizer: function () {
-      if (YouTubeManager._observer) {
-        YouTubeManager._observer.disconnect();
+    _startPreload: function (card) {
+      if (card._preloaded) return;
+
+      // Si la card venía de un error previo, resetear a 'loading' para que
+      // el usuario no vea "Error de carga" mientras se recarga. Si la carga
+      // subsiguiente falla, onError/showFailed lo pondrá en 'error' de nuevo.
+      if (card._sm) card._sm.setState('loading', true);
+
+      // Limpiar flag de cancelación previa para que showFailed pueda
+      // mostrar error si esta recarga falla.
+      delete card._ytCancelled;
+
+      // YouTube: create player from pending handler
+      var pid = card.dataset.ytPending;
+      if (pid) {
+        card.removeAttribute('data-yt-pending');
+        var h = YouTubeManager._pendingHandlers.get(pid);
+        if (h) {
+          YouTubeManager._pendingHandlers.delete(pid);
+          var target = document.getElementById(pid);
+          if (target) {
+            YouTubeManager._createPlayer(h.entryId, target, {
+              onReady: h.onReady,
+              onStateChange: h.onStateChange,
+              onError: h.onError
+            });
+          }
+        }
+      } else {
+        // Cloudinary: set src, attach listeners, start 20s error timeout
+        var videoEl = card.querySelector('video');
+        if (videoEl && videoEl.dataset && videoEl.dataset.src) {
+          var sm = card._sm;
+          if (!sm) return;
+          var cloudinaryReady = false;
+          var cloudinaryFailed = false;
+          var cloudinaryTimer = setTimeout(function () {
+            if (!cloudinaryReady) {
+              cloudinaryFailed = true;
+              sm.setState('error');
+            }
+          }, 20000);
+
+          var canplayHandler = function () {
+            if (cloudinaryReady || cloudinaryFailed) return;
+            cloudinaryReady = true;
+            clearTimeout(cloudinaryTimer);
+            sm.setState('ready');
+          };
+
+          var errorHandler = function () {
+            if (cloudinaryReady) return;
+            cloudinaryFailed = true;
+            clearTimeout(cloudinaryTimer);
+            sm.setState('error');
+          };
+
+          videoEl.addEventListener('canplay', canplayHandler);
+          videoEl.addEventListener('error', errorHandler);
+          card._cloudinaryTimer = cloudinaryTimer;
+          card._canplayHandler = canplayHandler;
+          card._errorHandler = errorHandler;
+
+          videoEl.src = videoEl.dataset.src;
+        }
       }
+
+      card._preloaded = true;
+    },
+
+    _cancelPreload: function (card) {
+      if (!card._preloaded) return;
+
+      var entryId = card.dataset.videoId;
+      var target = card.querySelector('.video-player-target');
+
+      // YouTube: destruir player y reinstaurar pending state
+      // para que _startPreload pueda recrearlo al volver.
+      if (YouTubeManager._players[entryId]) {
+        try { YouTubeManager._players[entryId].destroy(); } catch (_) {}
+        delete YouTubeManager._players[entryId];
+
+        // Reinstaurar data-yt-pending con handlers guardados
+        if (target && card._ytHandlers) {
+          card.dataset.ytPending = target.id;
+          YouTubeManager._pendingHandlers.set(target.id, {
+            entryId: entryId,
+            onReady: card._ytHandlers.onReady,
+            onStateChange: card._ytHandlers.onStateChange,
+            onError: card._ytHandlers.onError
+          });
+        }
+      } else if (target) {
+        // El player NO se creó aún (YT API no cargó, init() está encolado
+        // en _ytPendingPlayers). Marcamos el target como cancelado para que
+        // el init() pendiente no lo cree cuando la API esté lista.
+        YouTubeManager._cancelledTargets = YouTubeManager._cancelledTargets || new Set();
+        YouTubeManager._cancelledTargets.add(target.id);
+      }
+
+      // Flag para que callbacks asíncronos tardíos (showFailed, retryTimers)
+      // no modifiquen el estado de una card que ya no está en precarga.
+      card._ytCancelled = true;
+
+      // Cloudinary: stop loading, remove listeners, clear timeout
+      var videoEl = card.querySelector('video');
+      if (videoEl && videoEl.dataset && videoEl.dataset.src) {
+        if (card._canplayHandler) {
+          videoEl.removeEventListener('canplay', card._canplayHandler);
+        }
+        if (card._errorHandler) {
+          videoEl.removeEventListener('error', card._errorHandler);
+        }
+        videoEl.removeAttribute('src');
+      }
+      if (card._cloudinaryTimer) {
+        clearTimeout(card._cloudinaryTimer);
+      }
+      delete card._cloudinaryTimer;
+      delete card._canplayHandler;
+      delete card._errorHandler;
+
+      card._preloaded = false;
+    },
+
+    setupScrollOptimizer: function () {
+      // Desconectar observers anteriores
+      if (YouTubeManager._viewportObserver) YouTubeManager._viewportObserver.disconnect();
+      if (YouTubeManager._preloadObserver) YouTubeManager._preloadObserver.disconnect();
+      if (YouTubeManager._maintenanceObserver) YouTubeManager._maintenanceObserver.disconnect();
 
       var scrollContainer = document.querySelector('.panel-content');
       if (!scrollContainer) return;
 
-      // Single IntersectionObserver: handles YT player creation, entrance AND exit.
-      // threshold [0.5] dispara al cruzar 50% en cualquier dirección:
-      //   isIntersecting=true  → card entró (o re-entró) al viewport
-      //   isIntersecting=false → card salió del viewport (debajo del 50%)
-      // El gate `card._animated` previene que cards no-visibles en panel open
-      // inicial disparen exit al setup (porque aún no fueron animadas).
-      YouTubeManager._observer = new IntersectionObserver(function (entries) {
+      var ROW_PX = 300; // alto aprox de cada fila de cards (card + gap)
+
+      // ====================================================================
+      // OBSERVER 1: VIEWPORT (0px margin, threshold [0, 0.5])
+      // Detecta entrada/salida del viewport real con umbral de 50%.
+      // Solo maneja animaciones --enter / --exit.
+      // ====================================================================
+      YouTubeManager._viewportObserver = new IntersectionObserver(function (entries) {
         entries.forEach(function (entry) {
           var card = entry.target;
-          if (card._deleting) return; // No re-clasificar una card en eliminación
-          // Índice de la card en la lista → se usa para stagger tanto en
-          // entrance como en exit (mismo delay = simetría visual)
-          var idx = Array.from(card.parentNode.children).indexOf(card);
+          if (card._deleting) return;
 
-          if (entry.isIntersecting) {
-            // === ENTRANCE / RE-ENTRY ===
+          if (entry.intersectionRatio >= 0.5) {
+            // === ≥50% VISIBLE — ENTRANCE / RE-ENTRY ===
+            card.classList.remove('video-card--exit');
 
-            // Si la card estaba saliendo, cancelar el exit y re-disparar entrance.
-            // El force reflow garantiza que el browser registre la remoción de exit
-            // antes de re-agregar enter → animación arranca desde el estado final
-            // del exit (opacity:0, translate:0 24px) que coincide con el from del
-            // entrance → sin flash.
-            if (card.classList.contains('video-card--exit')) {
-              card.classList.remove('video-card--exit');
-              void card.offsetWidth; // force reflow
-            }
-
-            // Create YT player if pending (always, not gated by _animated)
-            var pid = card.dataset.ytPending;
-            if (pid) {
-              card.removeAttribute('data-yt-pending');
-              var h = YouTubeManager._pendingHandlers.get(pid);
-              if (h) {
-                YouTubeManager._pendingHandlers.delete(pid);
-                var target = document.getElementById(pid);
-                if (target) {
-                  YouTubeManager._createPlayer(h.entryId, target, {
-                    onReady: h.onReady,
-                    onStateChange: h.onStateChange,
-                    onError: h.onError
-                  });
-                }
-              }
-            }
-
-            // Entrance animation (primera vez o re-entry) con stagger por índice
             if (!card._animated) {
+              var idx = Array.from(card.parentNode.children).indexOf(card);
               card._animated = true;
-              card.style.setProperty('--delay', Math.min(idx, 10) * 0.08 + 's');
+              card.style.setProperty('--delay', Math.min(idx, 10) * 0.06 + 's');
               card.classList.add('video-card--enter');
             }
+            card._everEntered = true;
 
-            // Status text re-animation for scroll re-entry (state-aware)
+            // Re-trigger status text al re-entrar
             if (card._triggerStatus) {
-              setTimeout(function (crd) {
-                return function () {
-                  crd._triggerStatus();
-                };
-              }(card), 600);
+              setTimeout((function (crd) {
+                return function () { crd._triggerStatus(); };
+              })(card), 400);
             }
-          } else {
-            // === EXIT ===
+          } else if (card._everEntered) {
+            // === <50% VISIBLE — EXIT (solo si estuvo visible antes) ===
+            card._everEntered = false;
+            card._animated = false;
+            card.classList.add('video-card--exit');
 
-            // Solo aplicar exit si la card ya fue animada antes. Esto previene
-            // que cards que aún no entraron (panel open inicial, observer setup)
-            // disparen exit al ser evaluadas con isIntersecting=false.
-            if (!card.classList.contains('video-card--exit') && card._animated) {
-              card._animated = false;
-              // Stagger por índice: cards de arriba (índice bajo) salen primero
-              // al hacer scroll up, y arrancan su animación antes → salida
-              // secuencial de arriba hacia abajo.
-              card.style.setProperty('--delay', Math.min(idx, 10) * 0.08 + 's');
-              card.classList.add('video-card--exit');
-            }
-
-            // Restore thumb si la card no está lista (el player de YT no cargó aún)
+            // Restaurar thumb si el player no está listo
             if (!card.dataset.ytReady) {
               var thumb = card.querySelector('.video-thumb');
               if (thumb) thumb.style.opacity = '1';
@@ -1331,12 +1420,56 @@
         });
       }, {
         root: scrollContainer,
-        rootMargin: '0px 0px -50px 0px',
-        threshold: [0.5]
+        threshold: [0, 0.5]
       });
 
+      // ====================================================================
+      // OBSERVER 2: PRELOAD (600px / ~2 filas de margen)
+      // Cuando una card entra a esta zona, se empieza a cargar (player YT,
+      // src de Cloudinary) si no estaba cargada ya.
+      // ====================================================================
+      YouTubeManager._preloadObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          var card = entry.target;
+          if (card._deleting) return;
+
+          if (entry.isIntersecting && !card._preloaded) {
+            YouTubeManager._startPreload(card);
+          }
+        });
+      }, {
+        root: scrollContainer,
+        rootMargin: ROW_PX * 2 + 'px 0px ' + ROW_PX * 2 + 'px 0px',
+        threshold: [0]
+      });
+
+      // ====================================================================
+      // OBSERVER 3: MAINTENANCE (1200px / ~4 filas de margen)
+      // Cuando una card SALE de esta zona (>4 filas de distancia), se
+      // descarga para liberar memoria. Entre 2 y 4 filas la card se
+      // mantiene cargada pero sin animación.
+      // ====================================================================
+      YouTubeManager._maintenanceObserver = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          var card = entry.target;
+          if (card._deleting) return;
+
+          if (!entry.isIntersecting && card._preloaded) {
+            // Salió de la zona de 4 filas → descargar
+            YouTubeManager._cancelPreload(card);
+          }
+        });
+      }, {
+        root: scrollContainer,
+        rootMargin: ROW_PX * 4 + 'px 0px ' + ROW_PX * 4 + 'px 0px',
+        threshold: [0]
+      });
+
+      // Observar todas las cards existentes
       document.querySelectorAll('#video-list .video-card').forEach(function (card) {
-        YouTubeManager._observer.observe(card);
+        YouTubeManager._viewportObserver.observe(card);
+        YouTubeManager._preloadObserver.observe(card);
+        YouTubeManager._maintenanceObserver.observe(card);
       });
     },
 
@@ -1357,28 +1490,36 @@
       var cards = document.querySelectorAll('#video-list .video-card');
       if (cards.length === 0) return;
 
-      // Reconnect observer: fue desconectado en PanelController.open para
-      // evitar que disparara durante la ventana de animación. setupScrollOptimizer
-      // desconecta el existente y crea uno fresh.
+      // Reconnect observers: fueron desconectados en PanelController.open
+      // para evitar que dispararan durante la ventana de animación.
       YouTubeManager.setupScrollOptimizer();
 
-      // Stagger 80ms por card → se sienten "una por una" sin ser lento
-      // Nota: no hay filtro de visibilidad acá porque todas las cards están
-      // en el viewport cuando animateEntries se llama desde PanelController.open().
-      // El IntersectionObserver (en setupScrollOptimizer) maneja las cards
-      // que entran al viewport durante el scroll.
-      cards.forEach(function (card, i) {
-        card.style.setProperty('--delay', Math.min(i, 10) * 0.08 + 's');
-        card._animated = true;
-        card.classList.add('video-card--enter');
+      // Solo animar las cards que están en el viewport o hasta 200px abajo.
+      // El resto las maneja el viewport observer al scrollear.
+      var scrollContainer = document.querySelector('.panel-content');
+      var containerRect = scrollContainer ? scrollContainer.getBoundingClientRect() : null;
+
+      var visibleIdx = 0;
+      cards.forEach(function (card) {
+        var cardRect = card.getBoundingClientRect();
+        var isNearViewport = !containerRect ||
+          cardRect.top < containerRect.bottom + 200;
+
+        if (isNearViewport) {
+          card.style.setProperty('--delay', Math.min(visibleIdx, 10) * 0.06 + 's');
+          card._animated = true;
+          card._everEntered = true;
+          card.classList.add('video-card--enter');
+          visibleIdx++;
+        }
       });
 
-      // Trigger status text solo para cards animadas (las que sí se ven)
+      // Trigger status text solo para cards animadas
       cards.forEach(function (card) {
         if (card._animated && card._triggerStatus) {
-          setTimeout(function (crd) {
+          setTimeout((function (crd) {
             return function () { crd._triggerStatus(); };
-          }(card), 600);
+          })(card), 600);
         }
       });
     }
@@ -1391,7 +1532,7 @@
   // reconstruía todos los iframes. Patrón basado en comentario-item
   // (líneas 1297-1360) adaptado a flex-wrap.
   // ======================================================================
-  function removeOne(card, id, observer) {
+  function removeOne(card, id) {
     if (card._deleting) return;     // Idempotencia: doble click, eventos en cola
     card._deleting = true;
 
@@ -1401,11 +1542,13 @@
     if (p) { try { p.destroy(); } catch (_) {} delete YouTubeManager._players[id]; }
     YouTubeManager.remove(id);
 
-    // Detach del observer: el IntersectionObserver de setupScrollOptimizer
-    // no debe re-clasificar la card mientras se elimina.
-    if (observer && typeof observer.unobserve === 'function') {
-      observer.unobserve(card);
-    }
+    // Detach de todos los observers: ninguno debe re-clasificar la card
+    // mientras se elimina.
+    [YouTubeManager._viewportObserver, YouTubeManager._preloadObserver, YouTubeManager._maintenanceObserver].forEach(function (obs) {
+      if (obs && typeof obs.unobserve === 'function') {
+        obs.unobserve(card);
+      }
+    });
 
     // Si el usuario pidió menos movimiento, saltamos ambas fases y
     // removemos al toque.
@@ -1437,18 +1580,18 @@
       if (e.propertyName !== 'clip-path') return;   // ignora transitionend de opacity
       card.removeEventListener('transitionend', onSweepEnd);
       phase1Done = true;
-      // Espera 0.3s antes del collapse: deja que la vista "registre" que
+      // Espera 0.2s antes del collapse: deja que la vista "registre" que
       // la card se fue antes de que los siblings empiecen a cerrarse.
       // Sin esta pausa, sweep y collapse se sienten como un solo evento.
-      setTimeout(colapsarYEliminar, 300);
+      setTimeout(colapsarYEliminar, 200);
     }
     card.addEventListener('transitionend', onSweepEnd);
 
     // Fallback: si transitionend no dispara (p.ej. tab en background)
-    // 850ms cubre los 0.55s de la transición + 0.3s de espera con slack.
+    // 600ms cubre los 0.4s de la transición + 0.2s de espera con slack.
     setTimeout(function () {
       if (!phase1Done) colapsarYEliminar();
-    }, 850);
+    }, 600);
 
     function colapsarYEliminar() {
       if (card._collapsed) return;            // Timer + transitionend llegaron juntos
@@ -1469,7 +1612,7 @@
       setTimeout(function () {
         if (card.parentNode) card.parentNode.removeChild(card);
         updateVideoAggregateUI();
-      }, 400);
+      }, 300);
     }
   }
 
