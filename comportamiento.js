@@ -754,9 +754,10 @@
         // Guardar statusMachine para _startPreload
         card._sm = statusMachine;
 
-        // Click en cover → reproducir
+        // Click en cover → reproducir (usa card._cloudinaryFailed en vez de
+        // la variable local que solo existe dentro del closure de _startPreload)
         cover.addEventListener('click', function () {
-          if (cloudinaryFailed) return;
+          if (card._cloudinaryFailed) return;
           videoEl.play().catch(function () {});
         });
 
@@ -808,6 +809,8 @@
         function clearRetryTimers() {
           retryTimers.forEach(function (t) { clearTimeout(t); });
           retryTimers = [];
+          clearTimeout(card._ytErrorTimer);
+          delete card._ytErrorTimer;
         }
 
         function onReady() {
@@ -903,12 +906,12 @@
         };
         // No crear el player ahora — se crea en setupScrollOptimizer cuando entra al viewport
 
-        retryTimers.push(setTimeout(showFailed, 20000));
+        card._ytErrorTimer = setTimeout(showFailed, 20000);
 
         retryOverlay.querySelector('.video-retry-btn').addEventListener('click', function () {
           clearRetryTimers();
           reloadVideo();
-          retryTimers.push(setTimeout(showFailed, 20000));
+          card._ytErrorTimer = setTimeout(showFailed, 20000);
         });
       }
 
@@ -1275,11 +1278,14 @@
         if (videoEl && videoEl.dataset && videoEl.dataset.src) {
           var sm = card._sm;
           if (!sm) return;
+          // Resetear error state previo para que el botón play funcione
+          delete card._cloudinaryFailed;
           var cloudinaryReady = false;
           var cloudinaryFailed = false;
           var cloudinaryTimer = setTimeout(function () {
             if (!cloudinaryReady) {
               cloudinaryFailed = true;
+              card._cloudinaryFailed = true;
               sm.setState('error');
             }
           }, 20000);
@@ -1288,12 +1294,14 @@
             if (cloudinaryReady || cloudinaryFailed) return;
             cloudinaryReady = true;
             clearTimeout(cloudinaryTimer);
+            delete card._cloudinaryFailed;
             sm.setState('ready');
           };
 
           var errorHandler = function () {
             if (cloudinaryReady) return;
             cloudinaryFailed = true;
+            card._cloudinaryFailed = true;
             clearTimeout(cloudinaryTimer);
             sm.setState('error');
           };
@@ -1345,6 +1353,11 @@
       // no modifiquen el estado de una card que ya no está en precarga.
       card._ytCancelled = true;
 
+      // Limpiar el timer de error para que showFailed no se dispare
+      // cuando la card vuelva a precarga y _startPreload borre _ytCancelled.
+      clearTimeout(card._ytErrorTimer);
+      delete card._ytErrorTimer;
+
       // Cloudinary: stop loading, remove listeners, clear timeout
       var videoEl = card.querySelector('video');
       if (videoEl && videoEl.dataset && videoEl.dataset.src) {
@@ -1362,6 +1375,7 @@
       delete card._cloudinaryTimer;
       delete card._canplayHandler;
       delete card._errorHandler;
+      delete card._cloudinaryFailed;
 
       card._preloaded = false;
     },
